@@ -1,6 +1,7 @@
 'use client';
 
 import { FormEvent, useMemo, useState } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/browser';
 
@@ -45,6 +46,7 @@ export default function AdminLogin() {
           {busy ? 'Signing in…' : 'Sign in'}
         </button>
         {message && <p className="form-error">{message}</p>}
+        <p><Link href="/admin/forgot-password">Forgot password?</Link></p>
       </form>
     </main>
   );
