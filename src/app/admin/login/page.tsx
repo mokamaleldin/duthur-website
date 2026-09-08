@@ -5,8 +5,6 @@ import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/browser';
 
-const TEMP_TEST_EMAIL = 'mohamed@admin.com';
-
 export default function AdminLogin() {
   const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
@@ -21,24 +19,6 @@ export default function AdminLogin() {
     const form = new FormData(e.currentTarget);
     const email = String(form.get('email') || '').trim().toLowerCase();
     const password = String(form.get('password') || '');
-
-    if (email === TEMP_TEST_EMAIL) {
-      const response = await fetch('/api/admin/test-login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email, password }),
-      });
-
-      if (!response.ok) {
-        setMessage('Email or password is incorrect.');
-        setBusy(false);
-        return;
-      }
-
-      router.replace('/admin');
-      router.refresh();
-      return;
-    }
 
     const { error } = await supabase.auth.signInWithPassword({ email, password });
 

@@ -16,22 +16,15 @@ const links = [
 export function AdminShell({
   children,
   email,
-  tempAuth = false,
 }: {
   children: React.ReactNode;
   email?: string;
-  tempAuth?: boolean;
 }) {
   const path = usePathname();
   const router = useRouter();
 
   async function logout() {
-    if (tempAuth) {
-      await fetch('/api/admin/test-logout', { method: 'POST' });
-    } else {
-      await createClient().auth.signOut();
-    }
-
+    await createClient().auth.signOut();
     router.replace('/admin/login');
     router.refresh();
   }
