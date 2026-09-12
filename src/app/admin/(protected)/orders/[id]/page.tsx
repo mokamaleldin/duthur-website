@@ -82,6 +82,34 @@ export default async function Page({ params }: { params: Promise<{ id: string }>
             <b>{o.shipping_method}</b>
           </p>
         </section>
+        <section className="admin-card">
+          <h2>Payment Proof / Dekont</h2>
+          {o.payment_proof_path ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              <p style={{ color: '#2b8a3e', fontWeight: 600, margin: 0 }}>
+                Receipt uploaded ✓
+              </p>
+              {o.payment_proof_uploaded_at && (
+                <small style={{ color: '#888' }}>
+                  Uploaded at: {new Date(o.payment_proof_uploaded_at).toLocaleString()}
+                </small>
+              )}
+              <div style={{ marginTop: '6px' }}>
+                <a
+                  href={`/api/orders/${o.id}/payment-proof`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="primary inline"
+                  style={{ fontSize: '13px', padding: '8px 16px', borderRadius: '8px' }}
+                >
+                  View / Download Receipt
+                </a>
+              </div>
+            </div>
+          ) : (
+            <p style={{ color: '#888', margin: 0 }}>No payment proof uploaded yet.</p>
+          )}
+        </section>
       </div>
       <OrderActions order={o} />
     </>

@@ -1,4 +1,5 @@
 'use client';
+import Image from 'next/image';
 import Link from 'next/link';
 import { ShoppingBag, Menu, X } from 'lucide-react';
 import { usePathname, useRouter } from 'next/navigation';
@@ -60,10 +61,19 @@ export function Header({locale}:{locale:Locale}){
       })}
     </nav>
     <button className="mobile-menu" onClick={()=>setOpen(!open)} aria-label="menu">{open?<X/>:<Menu/>}</button>
-    <Link href={`/${locale}`} className="logo" aria-label="DUTHUR">دُثُر</Link>
+    <Link href={`/${locale}`} className="logo header-logo" aria-label="DUTHUR">
+      <Image
+        src="/images/logo-mark-light.png"
+        alt="DUTHUR"
+        width={34}
+        height={33}
+        priority
+        className="header-logo-img"
+      />
+    </Link>
     <div className="nav-actions">
       <select aria-label="Language" value={locale} onChange={e=>switchLang(e.target.value)}>
-        <option value="tr">TR</option><option value="en">EN</option><option value="ar">AR</option>
+        <option value="en">EN</option><option value="ar">AR</option><option value="tr">TR</option>
       </select>
       <Link className={`cart-link ${isPulsing ? 'cart-link-pulse' : ''}`} href={`/${locale}/cart`} aria-label={t.cart}>
         <ShoppingBag size={21}/>

@@ -3,99 +3,110 @@
 import { FormEvent, useMemo, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { createClient } from '@/lib/supabase/browser';
-import { isLocale } from '@/lib/i18n';
-import type { Locale } from '@/types/store';
-
-const contactCopy = {
-  en: {
-    title: 'Contact us',
-    name: 'Name',
-    email: 'Email',
-    message: 'Message',
-    submit: 'Submit',
-    sending: 'Sending...',
-    sent: 'Message sent.',
-  },
-  ar: {
-    title: 'تواصل معنا',
-    name: 'الاسم',
-    email: 'البريد الإلكتروني',
-    message: 'الرسالة',
-    submit: 'إرسال',
-    sending: 'جارٍ الإرسال...',
-    sent: 'تم إرسال رسالتك.',
-  },
-  tr: {
-    title: 'Bize ulaşın',
-    name: 'Ad',
-    email: 'E-posta',
-    message: 'Mesaj',
-    submit: 'Gönder',
-    sending: 'Gönderiliyor...',
-    sent: 'Mesajınız gönderildi.',
-  },
-} satisfies Record<
-  Locale,
-  {
-    title: string;
-    name: string;
-    email: string;
-    message: string;
-    submit: string;
-    sending: string;
-    sent: string;
-  }
->;
+import { isLocale, dict } from '@/lib/i18n';
 
 export default function Contact() {
   const params = useParams<{ locale: string }>();
-  const locale = isLocale(params.locale) ? params.locale : 'tr';
-  const copy = contactCopy[locale];
+  const locale = isLocale(params.locale) ? params.locale : 'en';
+  const t = dict[locale];
   const supabase = useMemo(() => createClient(), []);
-  const [state, setState] = useState('');
+  const [state, setState] = useState<{ message: string; isError?: boolean } | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [errors, setErrors] = useState<{ name?: string; email?: string; message?: string }>({});
+
+  const isRtl = locale === 'ar';
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
     const formElement = e.currentTarget;
-    setSubmitting(true);
-    setState(copy.sending);
     const form = new FormData(formElement);
+    const name = String(form.get('name') || '').trim();
+    const email = String(form.get('email') || '').trim();
+    const message = String(form.get('message') || '').trim();
+
+    const newErrors: { name?: string; email?: string; message?: string } = {};
+
+    if (!name) {
+      newErrors.name = t.requiredField;
+    }
+    if (!email) {
+      newErrors.email = t.requiredField;
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+      newErrors.email = t.invalidEmail;
+    }
+    if (!message) {
+      newErrors.message = t.requiredField;
+    }
+
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors);
+      return;
+    }
+
+    setErrors({});
+    setSubmitting(true);
+    setState(null);
+
     const { error } = await supabase.rpc('submit_contact_message', {
-      p_name: form.get('name'),
-      p_email: form.get('email'),
-      p_message: form.get('message'),
+      p_name: name,
+      p_email: email,
+      p_message: message,
     });
+
     setSubmitting(false);
-    setState(error ? error.message : copy.sent);
-    if (!error) formElement.reset();
+    if (error) {
+      setState({ message: t.messageFailed, isError: true });
+    } else {
+      setState({ message: t.messageSent, isError: false });
+      formElement.reset();
+    }
   }
 
   return (
-    <main className="contact-page">
+    <main className="contact-page" dir={isRtl ? 'rtl' : 'ltr'}>
       <section className="contact-content" aria-labelledby="contact-title">
-        <h1 id="contact-title">{copy.title}</h1>
-        <form className="contact-form" onSubmit={submit}>
+        <h1 id="contact-title">{t.contactPageTitle}</h1>
+        <form className="contact-form" onSubmit={submit} noValidate>
           <div className="contact-grid">
             <label>
-              <span>{copy.name}</span>
-              <input required name="name" autoComplete="name" />
+              <span>{t.name}</span>
+              <input
+                name="name"
+                autoComplete="name"
+                onChange={() => errors.name && setErrors(prev => ({ ...prev, name: undefined }))}
+              />
+              {errors.name && <span className="form-error" role="alert">{errors.name}</span>}
             </label>
             <label>
-              <span>{copy.email}</span>
-              <input required type="email" name="email" autoComplete="email" />
+              <span>{t.email}</span>
+              <input
+                type="email"
+                name="email"
+                autoComplete="email"
+                dir="ltr"
+                onChange={() => errors.email && setErrors(prev => ({ ...prev, email: undefined }))}
+              />
+              {errors.email && <span className="form-error" role="alert">{errors.email}</span>}
             </label>
           </div>
           <label>
-            <span>{copy.message}</span>
-            <textarea required name="message" rows={5} />
+            <span>{t.message}</span>
+            <textarea
+              name="message"
+              rows={5}
+              onChange={() => errors.message && setErrors(prev => ({ ...prev, message: undefined }))}
+            />
+            {errors.message && <span className="form-error" role="alert">{errors.message}</span>}
           </label>
           <button className="contact-submit" type="submit" disabled={submitting}>
-            {submitting ? copy.sending : copy.submit}
+            {submitting ? t.sending : t.send}
           </button>
           {state && (
-            <p className="contact-state" role="status">
-              {state}
+            <p
+              className={`contact-state ${state.isError ? 'form-error' : ''}`}
+              role="status"
+            >
+              {state.message}
             </p>
           )}
         </form>

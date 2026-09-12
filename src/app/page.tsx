@@ -11,5 +11,5 @@ export default async function Page({
     redirect(`/auth/callback?code=${encodeURIComponent(code)}&next=/admin`);
   }
 
-  redirect('/tr');
+  redirect('/en');
 }

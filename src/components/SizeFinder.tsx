@@ -117,7 +117,7 @@ export function SizeFinder({ locale }: { locale: Locale }) {
             autoComplete="off"
             value={height}
             onChange={handleHeightChange}
-            placeholder={locale === 'ar' ? 'مثال: ١٧٥' : 'e.g. 175'}
+            placeholder={t.heightPlaceholder}
           />
         </label>
 
@@ -129,7 +129,7 @@ export function SizeFinder({ locale }: { locale: Locale }) {
             autoComplete="off"
             value={weight}
             onChange={handleWeightChange}
-            placeholder={locale === 'ar' ? 'مثال: ٧٢' : 'e.g. 72'}
+            placeholder={t.weightPlaceholder}
           />
         </label>
 

@@ -24,39 +24,19 @@ export default async function Home({ params }: { params: Promise<{ locale: strin
 
   return (
     <main className="home-main">
-      {/* 1. HERO SECTION WITH IMAGE & EDITORIAL OVERLAY */}
-      <section className="hero-section" aria-label="Hero">
+      {/* 1. EDITORIAL HERO — FULL-WIDTH IMAGE ONLY */}
+      <section className="hero-section" aria-label="DUTHUR">
         <div className="hero-media-wrap">
           <Image
-            src="/images/hero.png"
-            alt="DUTHUR — دُثُر"
-            fill
+            src="/images/all.png"
+            alt="DUTHUR"
+            width={1024}
+            height={576}
             priority
-            quality={90}
+            quality={95}
             sizes="100vw"
             className="hero-media-image"
           />
-          <div className="hero-scrim" />
-        </div>
-
-        <div className="hero-content-wrap">
-          <div className="hero-inner">
-            <p className="hero-eyebrow">{t.heroEyebrow}</p>
-            <h1 className="hero-heading">
-              {t.heroTitle.split('\n').map((line, idx) => (
-                <span key={idx} className="hero-title-line">
-                  {line}
-                  {idx === 0 && <br />}
-                </span>
-              ))}
-            </h1>
-            <p className="hero-description">{t.heroDesc}</p>
-            <div className="hero-cta-wrap">
-              <Link className="primary hero-cta" href={`/${locale}/products`}>
-                {t.shopNow}
-              </Link>
-            </div>
-          </div>
         </div>
       </section>
 
@@ -82,25 +62,23 @@ export default async function Home({ params }: { params: Promise<{ locale: strin
         </div>
       </section>
 
-      {/* 3. DUTHUR HORIZONTAL BRAND MARQUEE STRIP */}
+      {/* 3. DUTHUR LARGE TYPOGRAPHIC MARQUEE */}
       <section className="brand-marquee" aria-hidden="true">
         <div className="marquee-track">
           {Array.from({ length: 8 }).map((_, i) => (
             <span key={`m1-${i}`} className="marquee-item">
-              <span className="marquee-brand">DUTHUR</span>
+              <span className="marquee-latin">Duthur</span>
               <span className="marquee-sep">—</span>
-              <span className="marquee-arabic">دُثُر</span>
-              <span className="marquee-dot">•</span>
+              <span className="marquee-arabic">دثر</span>
             </span>
           ))}
         </div>
         <div className="marquee-track" aria-hidden="true">
           {Array.from({ length: 8 }).map((_, i) => (
             <span key={`m2-${i}`} className="marquee-item">
-              <span className="marquee-brand">DUTHUR</span>
+              <span className="marquee-latin">Duthur</span>
               <span className="marquee-sep">—</span>
-              <span className="marquee-arabic">دُثُر</span>
-              <span className="marquee-dot">•</span>
+              <span className="marquee-arabic">دثر</span>
             </span>
           ))}
         </div>
