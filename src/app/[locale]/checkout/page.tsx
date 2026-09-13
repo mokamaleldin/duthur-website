@@ -9,6 +9,7 @@ import { useCart } from '@/components/CartProvider';
 import { createClient } from '@/lib/supabase/browser';
 import { dict, isLocale } from '@/lib/i18n';
 import { turkeyProvinces } from '@/lib/turkey';
+import { countries } from '@/lib/countries';
 import { imageUrl } from '@/lib/images';
 
 type Settings = {
@@ -49,6 +50,9 @@ export default function Checkout() {
   const [appliedDiscount, setAppliedDiscount] = useState<AppliedDiscount | null>(null);
   const [discountMsg, setDiscountMsg] = useState<{ text: string; isError: boolean } | null>(null);
   const [validatingDiscount, setValidatingDiscount] = useState(false);
+
+  const [selectedCountry, setSelectedCountry] = useState('TR');
+  const [selectedProvince, setSelectedProvince] = useState('');
 
   const [loading, setLoading] = useState(false);
   const [submitError, setSubmitError] = useState('');
@@ -168,7 +172,7 @@ export default function Checkout() {
     const lastName = String(form.get('lastName') || '').trim();
     const email = String(form.get('email') || '').trim();
     const phone = String(form.get('phone') || '').trim();
-    const province = String(form.get('province') || '').trim();
+    const province = selectedCountry === 'TR' ? selectedProvince : String(form.get('province') || '').trim();
     const district = String(form.get('district') || '').trim();
     const address = String(form.get('address') || '').trim();
     const addressDetails = String(form.get('addressDetails') || '').trim();
@@ -195,12 +199,19 @@ export default function Checkout() {
     if (!lastName) {
       errors.lastName = t.enterLastName;
     }
+
     if (!province) {
-      errors.province = t.selectProvince;
+      errors.province = selectedCountry === 'TR'
+        ? t.selectProvince
+        : (locale === 'ar' ? 'يرجى إدخال المدينة / الولاية.' : locale === 'tr' ? 'Lütfen şehir giriniz.' : 'Please enter your city / state.');
     }
+
     if (!district) {
-      errors.district = t.enterDistrict;
+      errors.district = selectedCountry === 'TR'
+        ? t.enterDistrict
+        : (locale === 'ar' ? 'يرجى إدخال الحي أو المنطقة.' : locale === 'tr' ? 'Lütfen semt / bölge giriniz.' : 'Please enter your district / area.');
     }
+
     if (!address) {
       errors.address = t.enterAddress;
     }
@@ -216,11 +227,15 @@ export default function Checkout() {
     setFieldErrors({});
     setLoading(true);
 
+    const countryObj = countries.find((c) => c.code === selectedCountry);
+    const countryName = countryObj ? countryObj.name[locale] || countryObj.name.en : selectedCountry;
+
     const customer = {
       firstName,
       lastName,
       email,
       phone,
+      country: countryName,
       province,
       district,
       address,
@@ -446,10 +461,10 @@ export default function Checkout() {
         <div className="checkout-top-bar">
           <Link href={`/${locale}`} className="checkout-logo-link" aria-label="DUTHUR">
             <Image
-              src="/images/logo-full-dark.png"
+              src="/images/logo-full-light.png"
               alt="DUTHUR"
-              width={112}
-              height={40}
+              width={116}
+              height={42}
               priority
               className="checkout-logo-img"
             />
@@ -462,10 +477,10 @@ export default function Checkout() {
             <form onSubmit={submit} className="checkout-form-inner" noValidate>
               <h1 className="checkout-heading">{t.checkoutTitle}</h1>
 
-              {/* CONTACT SECTION */}
+              {/* CONTACT SECTION (EMAIL & PHONE SIDE-BY-SIDE) */}
               <section className="checkout-section">
                 <h2 className="checkout-subheading">{t.contactTitle}</h2>
-                <div className="grid2">
+                <div className="checkout-row-2">
                   <div>
                     <input
                       type="email"
@@ -474,7 +489,7 @@ export default function Checkout() {
                       className="checkout-field"
                       dir="ltr"
                       autoComplete="email"
-                      onChange={() => fieldErrors.email && setFieldErrors(prev => ({ ...prev, email: '' }))}
+                      onChange={() => fieldErrors.email && setFieldErrors((prev) => ({ ...prev, email: '' }))}
                     />
                     {fieldErrors.email && (
                       <p className="form-error" role="alert">{fieldErrors.email}</p>
@@ -488,7 +503,7 @@ export default function Checkout() {
                       className="checkout-field"
                       dir="ltr"
                       autoComplete="tel"
-                      onChange={() => fieldErrors.phone && setFieldErrors(prev => ({ ...prev, phone: '' }))}
+                      onChange={() => fieldErrors.phone && setFieldErrors((prev) => ({ ...prev, phone: '' }))}
                     />
                     {fieldErrors.phone && (
                       <p className="form-error" role="alert">{fieldErrors.phone}</p>
@@ -500,15 +515,37 @@ export default function Checkout() {
               {/* DELIVERY SECTION */}
               <section className="checkout-section">
                 <h2 className="checkout-subheading">{t.delivery}</h2>
-                <div className="fixed-country-field">Türkiye</div>
-                <div className="grid2">
+
+                {/* Country Dropdown */}
+                <div>
+                  <select
+                    name="country"
+                    value={selectedCountry}
+                    onChange={(e) => {
+                      setSelectedCountry(e.target.value);
+                      setSelectedProvince('');
+                      if (fieldErrors.province) setFieldErrors((prev) => ({ ...prev, province: '' }));
+                    }}
+                    className="checkout-field checkout-select"
+                    aria-label={t.country}
+                  >
+                    {countries.map((c) => (
+                      <option key={c.code} value={c.code}>
+                        {c.name[locale] || c.name.en}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+
+                {/* First Name & Last Name (Side-by-Side) */}
+                <div className="checkout-row-2">
                   <div>
                     <input
                       name="firstName"
                       placeholder={t.firstName}
                       className="checkout-field"
                       autoComplete="given-name"
-                      onChange={() => fieldErrors.firstName && setFieldErrors(prev => ({ ...prev, firstName: '' }))}
+                      onChange={() => fieldErrors.firstName && setFieldErrors((prev) => ({ ...prev, firstName: '' }))}
                     />
                     {fieldErrors.firstName && (
                       <p className="form-error" role="alert">{fieldErrors.firstName}</p>
@@ -520,7 +557,7 @@ export default function Checkout() {
                       placeholder={t.lastName}
                       className="checkout-field"
                       autoComplete="family-name"
-                      onChange={() => fieldErrors.lastName && setFieldErrors(prev => ({ ...prev, lastName: '' }))}
+                      onChange={() => fieldErrors.lastName && setFieldErrors((prev) => ({ ...prev, lastName: '' }))}
                     />
                     {fieldErrors.lastName && (
                       <p className="form-error" role="alert">{fieldErrors.lastName}</p>
@@ -528,33 +565,66 @@ export default function Checkout() {
                   </div>
                 </div>
 
-                <div className="grid2">
-                  <div>
-                    <select
-                      name="province"
-                      defaultValue=""
-                      className="checkout-field checkout-select"
-                      onChange={() => fieldErrors.province && setFieldErrors(prev => ({ ...prev, province: '' }))}
-                    >
-                      <option value="" disabled>
-                        {t.province}
-                      </option>
-                      {turkeyProvinces.map((p) => (
-                        <option key={p} value={p}>
-                          {p}
+                {/* Province / City & District (Side-by-Side) */}
+                <div className="checkout-row-2">
+                  {selectedCountry === 'TR' ? (
+                    <div>
+                      <select
+                        name="province"
+                        value={selectedProvince}
+                        className="checkout-field checkout-select"
+                        onChange={(e) => {
+                          setSelectedProvince(e.target.value);
+                          if (fieldErrors.province) setFieldErrors((prev) => ({ ...prev, province: '' }));
+                        }}
+                      >
+                        <option value="" disabled>
+                          {t.province}
                         </option>
-                      ))}
-                    </select>
-                    {fieldErrors.province && (
-                      <p className="form-error" role="alert">{fieldErrors.province}</p>
-                    )}
-                  </div>
+                        {turkeyProvinces.map((p) => (
+                          <option key={p} value={p}>
+                            {p}
+                          </option>
+                        ))}
+                      </select>
+                      {fieldErrors.province && (
+                        <p className="form-error" role="alert">{fieldErrors.province}</p>
+                      )}
+                    </div>
+                  ) : (
+                    <div>
+                      <input
+                        name="province"
+                        placeholder={
+                          locale === 'ar'
+                            ? 'المدينة / المحافظة'
+                            : locale === 'tr'
+                            ? 'Şehir / Eyalet'
+                            : 'City / State'
+                        }
+                        className="checkout-field"
+                        onChange={() => fieldErrors.province && setFieldErrors((prev) => ({ ...prev, province: '' }))}
+                      />
+                      {fieldErrors.province && (
+                        <p className="form-error" role="alert">{fieldErrors.province}</p>
+                      )}
+                    </div>
+                  )}
+
                   <div>
                     <input
                       name="district"
-                      placeholder={t.district}
+                      placeholder={
+                        selectedCountry === 'TR'
+                          ? t.district
+                          : locale === 'ar'
+                          ? 'الحي / المنطقة'
+                          : locale === 'tr'
+                          ? 'Semt / Bölge'
+                          : 'District / Area'
+                      }
                       className="checkout-field"
-                      onChange={() => fieldErrors.district && setFieldErrors(prev => ({ ...prev, district: '' }))}
+                      onChange={() => fieldErrors.district && setFieldErrors((prev) => ({ ...prev, district: '' }))}
                     />
                     {fieldErrors.district && (
                       <p className="form-error" role="alert">{fieldErrors.district}</p>
@@ -562,30 +632,34 @@ export default function Checkout() {
                   </div>
                 </div>
 
+                {/* Full Address */}
                 <div>
                   <input
                     name="address"
                     placeholder={t.address}
                     className="checkout-field"
                     autoComplete="street-address"
-                    onChange={() => fieldErrors.address && setFieldErrors(prev => ({ ...prev, address: '' }))}
+                    onChange={() => fieldErrors.address && setFieldErrors((prev) => ({ ...prev, address: '' }))}
                   />
                   {fieldErrors.address && (
                     <p className="form-error" role="alert">{fieldErrors.address}</p>
                   )}
                 </div>
 
-                <input
-                  name="addressDetails"
-                  placeholder={t.addressDetails}
-                  className="checkout-field"
-                />
-                <input
-                  name="postalCode"
-                  placeholder={t.postalCode}
-                  className="checkout-field"
-                  dir="ltr"
-                />
+                {/* Building Details & Postal Code (Side-by-Side) */}
+                <div className="checkout-row-2">
+                  <input
+                    name="addressDetails"
+                    placeholder={t.addressDetails}
+                    className="checkout-field"
+                  />
+                  <input
+                    name="postalCode"
+                    placeholder={t.postalCode}
+                    className="checkout-field"
+                    dir="ltr"
+                  />
+                </div>
               </section>
 
               {/* SHIPPING METHOD */}
@@ -776,7 +850,7 @@ export default function Checkout() {
                 {discountAmount > 0 && (
                   <div className="totals-line">
                     <span>{t.discount}</span>
-                    <b style={{ color: '#2b8a3e' }}>-{discountAmount.toFixed(2)} TL</b>
+                    <b style={{ color: '#7bb58e' }}>-{discountAmount.toFixed(2)} TL</b>
                   </div>
                 )}
                 <div className="totals-line">
