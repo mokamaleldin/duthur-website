@@ -5,7 +5,7 @@ import path from 'path';
 import fs from 'fs';
 
 const FINANCE_JSON_PATH = path.join(process.cwd(), 'supabase', 'duthur_finance_ledger.json');
-const DB_MARKER_PREFIX = '__DUTHUR_LEDGER_V3__:';
+const DB_MARKER_PREFIX = '__DUTHUR_LEDGER_V4__:';
 
 export type ExtendedDuthurLedger = DuthurFinanceLedger & {
   deleted_order_ids?: string[];
@@ -50,7 +50,7 @@ export async function loadLedgerFromStorageOrLocal(
     if (fs.existsSync(FINANCE_JSON_PATH)) {
       const text = await fs.promises.readFile(FINANCE_JSON_PATH, 'utf8');
       const parsed = JSON.parse(text);
-      if (parsed && parsed.version) {
+      if (parsed && parsed.version >= 4) {
         return {
           ...parsed,
           deleted_order_ids: parsed.deleted_order_ids || [],
@@ -88,7 +88,9 @@ export async function saveLedgerToStorageAndLocal(
       .maybeSingle();
 
     const currentRaw = st?.announcement_tr || '2 ürün al, ücretsiz kargo kazan';
-    const cleanPrefix = currentRaw.split(DB_MARKER_PREFIX)[0];
+    const cleanPrefix = currentRaw
+      .split('__DUTHUR_LEDGER_V3__:')[0]
+      .split(DB_MARKER_PREFIX)[0];
     const encoded = `${cleanPrefix}${DB_MARKER_PREFIX}${jsonStr}`;
 
     await supabase

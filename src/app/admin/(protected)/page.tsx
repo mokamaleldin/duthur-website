@@ -11,7 +11,7 @@ export default async function Dashboard() {
     ledger,
   ] = await Promise.all([
     s.from('products').select('*', { count: 'exact', head: true }),
-    s.from('orders').select('id,total,order_status,admin_note'),
+    s.from('orders').select('id,total,order_status,payment_status,admin_note'),
     s.from('orders').select('*').order('created_at', { ascending: false }).limit(12),
     loadLedgerFromStorageOrLocal(s),
   ]);
@@ -27,7 +27,27 @@ export default async function Dashboard() {
     (o) => !deletedIds.has(o.id) && o.admin_note !== '__DELETED__'
   );
   const validOrders = activeOrderRows.filter((o) => !nonVoidStatuses.has(o.order_status));
-  const sales = validOrders.reduce((a, o) => a + Number(o.total || 0), 0);
+  const paidWebsiteSales = validOrders
+    .filter(
+      (o) =>
+        o.payment_status === 'paid' ||
+        o.order_status === 'confirmed' ||
+        o.order_status === 'shipped' ||
+        o.order_status === 'delivered'
+    )
+    .reduce((a, o) => a + Number(o.total || 0), 0);
+
+  // Confirmed sales from reconciled ledger (12 Shopify + 2 Manual = 14 orders, 15,531.48 TL)
+  const confirmedLedgerSales = (ledger.transactions || []).filter(
+    (t) => t.type === 'income' && t.status === 'confirmed'
+  );
+  const confirmedLedgerRevenue = confirmedLedgerSales.reduce(
+    (a, t) => a + Number(t.amount_original || 0),
+    0
+  );
+
+  const totalConfirmedSales = confirmedLedgerRevenue + paidWebsiteSales;
+  const totalConfirmedOrdersCount = confirmedLedgerSales.length + validOrders.length;
 
   const visibleRecent = (recent || [])
     .filter((o) => !deletedIds.has(o.id) && o.admin_note !== '__DELETED__')
@@ -56,15 +76,21 @@ export default async function Dashboard() {
         </div>
         <div>
           <span>Orders</span>
-          <strong>{validOrders.length}</strong>
+          <strong>{totalConfirmedOrdersCount}</strong>
+          <small style={{ color: '#777', fontSize: '12px', display: 'block', marginTop: '4px' }}>
+            12 Shopify + 2 Manual {validOrders.length > 0 ? `+ ${validOrders.length} Store` : ''}
+          </small>
         </div>
         <div>
           <span>Sales</span>
-          <strong>{sales.toFixed(2)} TL</strong>
+          <strong>{totalConfirmedSales.toFixed(2)} TL</strong>
+          <small style={{ color: '#777', fontSize: '12px', display: 'block', marginTop: '4px' }}>
+            Confirmed Revenue (15 T-shirts sold)
+          </small>
         </div>
       </div>
       <section className="admin-card">
-        <h2>Recent orders</h2>
+        <h2>Recent store orders</h2>
         <div className="admin-table">
           {visibleRecent.map((o) => (
             <Link className="table-row" key={o.id} href={`/admin/orders/${o.id}`}>

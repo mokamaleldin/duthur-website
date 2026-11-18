@@ -5,6 +5,7 @@ import {
   CurrencyCode,
   DEFAULT_FINANCE_LEDGER,
   DuthurFinanceLedger,
+  EXCLUDED_SHOPIFY_ORDERS,
   FinancialTransaction,
   SupplierEntry,
 } from '@/lib/finance-seed';
@@ -83,8 +84,23 @@ export function FinanceMasterClient({
     );
     const totalExpensesUsd = rate > 0 ? totalExpensesTry / rate : 0;
 
-    const ledgerIncomesTry = incomes
-      .filter((i) => i.status !== 'no_charge')
+    // ONLY include status === 'confirmed' in Confirmed Sales (excludes estimated_amount, duplicate_archived, pending_review, no_charge)
+    const confirmedIncomes = incomes.filter((i) => i.status === 'confirmed');
+    const ledgerIncomesTry = confirmedIncomes.reduce(
+      (a, i) =>
+        a +
+        (i.currency_original === 'USD'
+          ? Number(i.amount_original || 0) * rate
+          : Number(i.amount_original || 0)),
+      0
+    );
+
+    const shopifySalesTry = confirmedIncomes
+      .filter((i) => i.source === 'shopify')
+      .reduce((a, i) => a + Number(i.amount_original || 0), 0);
+
+    const manualSalesTry = confirmedIncomes
+      .filter((i) => i.source !== 'shopify')
       .reduce(
         (a, i) =>
           a +
@@ -94,6 +110,7 @@ export function FinanceMasterClient({
         0
       );
 
+    // Paid website orders from the new Next.js store (if any are marked paid)
     const validOrders = storeOrders.filter(
       (o) => !VOID_ORDER_STATUSES.has(o.order_status) && o.admin_note !== '__DELETED__'
     );
@@ -113,30 +130,51 @@ export function FinanceMasterClient({
     const remainingCapitalTry = Math.max(0, totalExpensesTry - totalSalesTry);
     const remainingCapitalUsd = rate > 0 ? remainingCapitalTry / rate : 0;
 
-    let remainingStock = 237;
-    if (storeProducts.length > 0) {
-      const sumVariants = storeProducts.reduce(
-        (acc, p) =>
-          acc +
-          (p.product_variants || []).reduce(
-            (s: number, v: any) => s + Number(v.stock_quantity || 0),
-            0
-          ),
-        0
-      );
-      if (sumVariants > 0) remainingStock = sumVariants;
-    }
+    // Inventory calculation from reconciled movements: 252 + sum(signed_delta) = 233
+    const totalManufactured = ledger.designs.reduce(
+      (acc, d) =>
+        acc +
+        Number(d.initial_stock.S || 0) +
+        Number(d.initial_stock.M || 0) +
+        Number(d.initial_stock.L || 0) +
+        Number(d.initial_stock.XL || 0),
+      0
+    );
+    const activeMovements = (ledger.movements || []).filter((m) => !m.archived);
+    const totalMovementDelta = activeMovements.reduce(
+      (acc, m) => acc + Number(m.signed_delta || 0),
+      0
+    );
+    const remainingStock = totalManufactured + totalMovementDelta;
+
+    const totalSoldUnits = activeMovements
+      .filter((m) => m.type === 'sale')
+      .reduce((acc, m) => acc + Math.abs(Number(m.signed_delta || 0)), 0);
+
+    const personalUseUnits = activeMovements
+      .filter((m) => m.type === 'personal_use')
+      .reduce((acc, m) => acc + Math.abs(Number(m.signed_delta || 0)), 0);
+
+    const giftUnits = activeMovements
+      .filter((m) => m.type === 'gift')
+      .reduce((acc, m) => acc + Math.abs(Number(m.signed_delta || 0)), 0);
 
     return {
       totalExpensesTry,
       totalExpensesUsd,
+      shopifySalesTry,
+      manualSalesTry,
+      websiteSalesTry,
       totalSalesTry,
       totalSalesUsd,
       remainingCapitalTry,
       remainingCapitalUsd,
       remainingStock,
+      totalSoldUnits,
+      personalUseUnits,
+      giftUnits,
     };
-  }, [ledger.transactions, rate, storeOrders, storeProducts]);
+  }, [ledger.transactions, ledger.movements, ledger.designs, rate, storeOrders, storeProducts]);
 
   function handleAddTransaction(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -161,6 +199,7 @@ export function FinanceMasterClient({
       date,
       details: details || undefined,
       status: 'confirmed',
+      classification: type === 'income' ? 'manual_confirmed' : undefined,
       source: 'manual',
       fx_rate_at_transaction: rate,
       created_at: new Date().toISOString(),
@@ -173,6 +212,74 @@ export function FinanceMasterClient({
     });
   }
 
+  function handleApprovePendingTx(tx: FinancialTransaction) {
+    const nextTransactions = ledger.transactions.map((t) =>
+      t.id === tx.id
+        ? {
+            ...t,
+            status: 'confirmed' as const,
+            classification: 'manual_confirmed' as const,
+            category: 'Confirmed Manual Sale',
+          }
+        : t
+    );
+
+    // Also add stock movement if it's a sale or gift
+    const nextMovements = [...ledger.movements];
+    if (tx.id === 'rev-870' || tx.id === 'rev-850') {
+      nextMovements.push({
+        id: `mov-${tx.id}`,
+        sku: null,
+        design_key: null,
+        size: null,
+        type: 'sale',
+        qty: 1,
+        signed_delta: -1,
+        date: tx.date,
+        financial_transaction_id: tx.id,
+        source: 'manual',
+        note: `مبيعات يدوية مؤكدة بعد المراجعة (${tx.amount_original}₺)`,
+      });
+    } else if (tx.id === 'rev-gift-june30') {
+      nextMovements.push({
+        id: `mov-${tx.id}`,
+        sku: 'bila_aqarib:S',
+        design_key: 'bila_aqarib',
+        size: 'S',
+        type: 'gift',
+        qty: 1,
+        signed_delta: -1,
+        date: tx.date,
+        financial_transaction_id: tx.id,
+        source: 'historical',
+        note: 'هدية مستقلة مؤكدة: بلا عقارب (S) — 2026-06-30',
+      });
+    }
+
+    persistLedger({
+      ...ledger,
+      transactions: nextTransactions,
+      movements: nextMovements,
+    });
+  }
+
+  function handleArchivePendingTx(tx: FinancialTransaction) {
+    const nextTransactions = ledger.transactions.map((t) =>
+      t.id === tx.id
+        ? {
+            ...t,
+            status: 'duplicate_archived' as const,
+            classification: 'duplicate' as const,
+            category: 'Duplicate Sale',
+          }
+        : t
+    );
+    persistLedger({
+      ...ledger,
+      transactions: nextTransactions,
+    });
+  }
+
   function confirmDeleteTransaction() {
     if (!deleteTxTarget) return;
     const id = deleteTxTarget.id;
@@ -180,6 +287,7 @@ export function FinanceMasterClient({
     persistLedger({
       ...ledger,
       transactions: ledger.transactions.filter((t) => t.id !== id),
+      movements: ledger.movements.filter((m) => m.financial_transaction_id !== id),
     });
   }
 
@@ -220,10 +328,24 @@ export function FinanceMasterClient({
     });
   }
 
-  const visibleTransactions = useMemo(
+  // Active confirmed transactions (expenses + confirmed incomes)
+  const confirmedTransactions = useMemo(
+    () => ledger.transactions.filter((t) => t.status === 'confirmed'),
+    [ledger.transactions]
+  );
+
+  // Pending review items (870, 850, June 30 0 TL)
+  const pendingReviewTransactions = useMemo(
+    () => ledger.transactions.filter((t) => t.status === 'pending_review'),
+    [ledger.transactions]
+  );
+
+  // Archived / Excluded (Estimates 2,700 + Overlapping Manual Batch)
+  const archivedTransactions = useMemo(
     () =>
       ledger.transactions.filter(
-        (t) => t.status !== 'void' && Number(t.amount_original) > 0
+        (t) =>
+          t.status === 'estimated_amount' || t.status === 'duplicate_archived'
       ),
     [ledger.transactions]
   );
@@ -320,7 +442,12 @@ export function FinanceMasterClient({
             marginBottom: '16px',
           }}
         >
-          <h2 style={{ margin: 0 }}>Expenses & Revenue</h2>
+          <div>
+            <h2 style={{ margin: 0 }}>Expenses & Revenue</h2>
+            <small style={{ color: '#777' }}>
+              Shopify Confirmed: {stats.shopifySalesTry.toFixed(2)}₺ (12 orders / 13 units) + Manual Confirmed: {stats.manualSalesTry.toFixed(2)}₺ (2 units) = {stats.totalSalesTry.toFixed(2)}₺ | Expenses: {stats.totalExpensesTry.toFixed(2)}₺ | Cash Gap: {stats.remainingCapitalTry.toFixed(2)}₺
+            </small>
+          </div>
           <button
             type="button"
             className="primary inline"
@@ -347,7 +474,7 @@ export function FinanceMasterClient({
           <span>Delete</span>
         </div>
 
-        {visibleTransactions.map((t) => {
+        {confirmedTransactions.map((t) => {
           const isUsd = t.currency_original === 'USD';
           const tryEquivalent = isUsd
             ? t.amount_original * rate
@@ -412,6 +539,106 @@ export function FinanceMasterClient({
             </div>
           );
         })}
+      </section>
+
+      {/* RECONCILIATION & PENDING REVIEW SECTION */}
+      <section className="admin-card">
+        <h2 style={{ margin: '0 0 8px' }}>Sales Reconciliation & Audit Archive</h2>
+        <p className="muted" style={{ margin: '0 0 14px' }}>
+          Records below are excluded from Confirmed Sales until verified, or archived as duplicates/estimates so nothing is double-counted.
+        </p>
+
+        {pendingReviewTransactions.length > 0 && (
+          <div style={{ marginBottom: '18px' }}>
+            <h3 style={{ fontSize: '15px', margin: '0 0 10px', color: '#92400e' }}>
+              Pending Review ({pendingReviewTransactions.length})
+            </h3>
+            {pendingReviewTransactions.map((t) => (
+              <div
+                key={t.id}
+                className="admin-table table-row"
+                style={{ gridTemplateColumns: '2fr 1fr auto' }}
+              >
+                <div>
+                  <strong>{t.title}</strong>
+                  <small style={{ display: 'block', color: '#777' }}>{t.details}</small>
+                </div>
+                <strong style={{ color: '#92400e' }}>
+                  {t.amount_original.toFixed(2)}₺
+                </strong>
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    type="button"
+                    onClick={() => handleApprovePendingTx(t)}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: '7px',
+                      border: '1px solid #2b8a3e',
+                      background: '#d8f0dc',
+                      color: '#1b5e20',
+                      fontSize: '12px',
+                      fontWeight: 600,
+                    }}
+                  >
+                    Approve as Independent
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => handleArchivePendingTx(t)}
+                    style={{
+                      padding: '6px 12px',
+                      borderRadius: '7px',
+                      border: '1px solid #ddd',
+                      background: '#fff',
+                      color: '#666',
+                      fontSize: '12px',
+                    }}
+                  >
+                    Mark Duplicate / Archive
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        <details>
+          <summary style={{ fontSize: '14px', color: '#555' }}>
+            View Excluded & Archived Records (Duplicates, 2,700₺ Estimates & Voided/Refunded Shopify Orders)
+          </summary>
+          <div style={{ marginTop: '12px' }}>
+            {archivedTransactions.map((t) => (
+              <div
+                key={t.id}
+                className="admin-table table-row"
+                style={{ gridTemplateColumns: '2fr 1fr 1fr', opacity: 0.7 }}
+              >
+                <div>
+                  <strong>{t.title}</strong>
+                  <small style={{ display: 'block', color: '#777' }}>{t.details}</small>
+                </div>
+                <span className="status cancelled">{t.category}</span>
+                <span style={{ textDecoration: 'line-through' }}>
+                  {t.amount_original.toFixed(2)}₺
+                </span>
+              </div>
+            ))}
+            {EXCLUDED_SHOPIFY_ORDERS.map((eo) => (
+              <div
+                key={eo.order_number}
+                className="admin-table table-row"
+                style={{ gridTemplateColumns: '2fr 1fr 1fr', opacity: 0.7 }}
+              >
+                <div>
+                  <strong>Shopify {eo.order_number}</strong>
+                  <small style={{ display: 'block', color: '#777' }}>{eo.reason}</small>
+                </div>
+                <span className="status cancelled">{eo.status}</span>
+                <span>{eo.amount ? `${eo.amount.toFixed(2)}₺` : '-'}</span>
+              </div>
+            ))}
+          </div>
+        </details>
       </section>
 
       {/* SUPPLIERS DIRECTORY SECTION */}

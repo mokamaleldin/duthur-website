@@ -9,9 +9,9 @@ export function SettingsForm({ initial }: { initial: any }) {
   const s = useMemo(() => createClient(), []);
   const [msg, setMsg] = useState('');
 
-  const cleanAnnouncementTr = String(initial.announcement_tr || '').split(
-    DB_MARKER_PREFIX
-  )[0];
+  const cleanAnnouncementTr = String(initial.announcement_tr || '')
+    .split('__DUTHUR_LEDGER_V3__:')[0]
+    .split('__DUTHUR_LEDGER_V4__:')[0];
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -25,8 +25,10 @@ export function SettingsForm({ initial }: { initial: any }) {
       .maybeSingle();
 
     const currentRaw = String(currentSt?.announcement_tr || '');
-    const ledgerSuffix = currentRaw.includes(DB_MARKER_PREFIX)
-      ? `${DB_MARKER_PREFIX}${currentRaw.split(DB_MARKER_PREFIX)[1]}`
+    const ledgerSuffix = currentRaw.includes('__DUTHUR_LEDGER_V4__:')
+      ? `__DUTHUR_LEDGER_V4__:${currentRaw.split('__DUTHUR_LEDGER_V4__:')[1]}`
+      : currentRaw.includes('__DUTHUR_LEDGER_V3__:')
+      ? `__DUTHUR_LEDGER_V3__:${currentRaw.split('__DUTHUR_LEDGER_V3__:')[1]}`
       : '';
 
     const payload: any = {
