@@ -4,6 +4,7 @@ import Link from 'next/link';
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/browser';
+import { ConfirmModal } from './ConfirmModal';
 
 const VOID_STATUSES = new Set(['cancelled', 'returned']);
 
@@ -12,6 +13,7 @@ export function OrdersListClient({ initialOrders }: { initialOrders: any[] }) {
   const router = useRouter();
   const [orders, setOrders] = useState(initialOrders);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<any | null>(null);
 
   async function restoreStockIfNeeded(orderId: string, currentStatus: string) {
     if (VOID_STATUSES.has(currentStatus)) return;
@@ -101,10 +103,7 @@ export function OrdersListClient({ initialOrders }: { initialOrders: any[] }) {
       .eq('id', order.id);
 
     setBusyId(null);
-    if (error) {
-      alert(error.message);
-      return;
-    }
+    if (error) return;
 
     setOrders((prev) =>
       prev.map((o) =>
@@ -116,9 +115,9 @@ export function OrdersListClient({ initialOrders }: { initialOrders: any[] }) {
     router.refresh();
   }
 
-  async function handleDelete(order: any) {
-    if (!confirm(`هل تريد مسح الطلب #${order.order_number} نهائياً؟`)) return;
-
+  async function confirmDelete() {
+    if (!deleteTarget) return;
+    const order = deleteTarget;
     setBusyId(order.id);
     await restoreStockIfNeeded(order.id, order.order_status);
 
@@ -129,115 +128,126 @@ export function OrdersListClient({ initialOrders }: { initialOrders: any[] }) {
     });
 
     setBusyId(null);
-    if (!res.ok) {
-      alert('حدث خطأ أثناء مسح الطلب');
-      return;
-    }
+    setDeleteTarget(null);
+    if (!res.ok) return;
 
     setOrders((prev) => prev.filter((o) => o.id !== order.id));
     router.refresh();
   }
 
   return (
-    <section className="admin-card">
-      <div
-        className="admin-table orders-head head"
-        style={{
-          gridTemplateColumns: '.6fr .9fr 1.4fr .8fr .8fr 1.2fr auto',
-        }}
-      >
-        <span>Order</span>
-        <span>Date</span>
-        <span>Customer</span>
-        <span>Total</span>
-        <span>Payment</span>
-        <span>Status</span>
-        <span>مسح</span>
-      </div>
-      {orders.map((o) => {
-        const isVoid = VOID_STATUSES.has(o.order_status);
-        const selectVal = getDisplaySelectValue(o);
+    <>
+      <section className="admin-card">
+        <div
+          className="admin-table orders-head head"
+          style={{
+            gridTemplateColumns: '.6fr .9fr 1.4fr .8fr .8fr 1.2fr auto',
+          }}
+        >
+          <span>Order</span>
+          <span>Date</span>
+          <span>Customer</span>
+          <span>Total</span>
+          <span>Payment</span>
+          <span>Status</span>
+          <span>Delete</span>
+        </div>
+        {orders.map((o) => {
+          const isVoid = VOID_STATUSES.has(o.order_status);
+          const selectVal = getDisplaySelectValue(o);
 
-        return (
-          <div
-            className="admin-table orders-head table-row"
-            key={o.id}
-            style={{
-              gridTemplateColumns: '.6fr .9fr 1.4fr .8fr .8fr 1.2fr auto',
-              opacity: isVoid ? 0.65 : 1,
-            }}
-          >
-            <Link href={`/admin/orders/${o.id}`}>
-              <strong>#{o.order_number}</strong>
-            </Link>
-            <Link href={`/admin/orders/${o.id}`}>
-              <span>{new Date(o.created_at).toLocaleDateString()}</span>
-            </Link>
-            <Link href={`/admin/orders/${o.id}`}>
-              <span>
-                {o.customer_first_name} {o.customer_last_name}
-              </span>
-            </Link>
-            <Link href={`/admin/orders/${o.id}`}>
-              <span style={{ textDecoration: isVoid ? 'line-through' : 'none' }}>
-                {Number(o.total).toFixed(2)} TL
-              </span>
-            </Link>
-            <Link href={`/admin/orders/${o.id}`}>
-              <span>{o.payment_status}</span>
-            </Link>
-            <div onClick={(e) => e.stopPropagation()}>
-              <select
-                value={selectVal}
-                disabled={busyId === o.id}
-                onChange={(e) => handleStatusChange(o, e.target.value)}
-                style={{
-                  padding: '6px 10px',
-                  borderRadius: '8px',
-                  fontSize: '12px',
-                  fontWeight: 600,
-                  border: '1px solid #d5d5d2',
-                  background:
-                    selectVal === 'new'
-                      ? '#fff0b8'
-                      : selectVal === 'confirmed' || selectVal === 'paid'
-                      ? '#dbe8ff'
-                      : selectVal === 'shipped'
-                      ? '#dcd7ff'
-                      : selectVal === 'delivered'
-                      ? '#d8f0dc'
-                      : '#f4d8d8',
-                  cursor: 'pointer',
-                }}
-              >
-                <option value="new">جديد</option>
-                <option value="confirmed">مؤكد</option>
-                <option value="paid">مدفوع</option>
-                <option value="shipped">تم الشحن</option>
-                <option value="delivered">تم التسليم</option>
-                <option value="cancelled">ملغي</option>
-                <option value="returned">مرتجع</option>
-              </select>
+          return (
+            <div
+              className="admin-table orders-head table-row"
+              key={o.id}
+              style={{
+                gridTemplateColumns: '.6fr .9fr 1.4fr .8fr .8fr 1.2fr auto',
+                opacity: isVoid ? 0.65 : 1,
+              }}
+            >
+              <Link href={`/admin/orders/${o.id}`}>
+                <strong>#{o.order_number}</strong>
+              </Link>
+              <Link href={`/admin/orders/${o.id}`}>
+                <span>{new Date(o.created_at).toLocaleDateString()}</span>
+              </Link>
+              <Link href={`/admin/orders/${o.id}`}>
+                <span>
+                  {o.customer_first_name} {o.customer_last_name}
+                </span>
+              </Link>
+              <Link href={`/admin/orders/${o.id}`}>
+                <span style={{ textDecoration: isVoid ? 'line-through' : 'none' }}>
+                  {Number(o.total).toFixed(2)} TL
+                </span>
+              </Link>
+              <Link href={`/admin/orders/${o.id}`}>
+                <span>{o.payment_status}</span>
+              </Link>
+              <div onClick={(e) => e.stopPropagation()}>
+                <select
+                  value={selectVal}
+                  disabled={busyId === o.id}
+                  onChange={(e) => handleStatusChange(o, e.target.value)}
+                  style={{
+                    padding: '6px 10px',
+                    borderRadius: '8px',
+                    fontSize: '12px',
+                    fontWeight: 600,
+                    border: '1px solid #d5d5d2',
+                    background:
+                      selectVal === 'new'
+                        ? '#fff0b8'
+                        : selectVal === 'confirmed' || selectVal === 'paid'
+                        ? '#dbe8ff'
+                        : selectVal === 'shipped'
+                        ? '#dcd7ff'
+                        : selectVal === 'delivered'
+                        ? '#d8f0dc'
+                        : '#f4d8d8',
+                    cursor: 'pointer',
+                  }}
+                >
+                  <option value="new">جديد</option>
+                  <option value="confirmed">مؤكد</option>
+                  <option value="paid">مدفوع</option>
+                  <option value="shipped">تم الشحن</option>
+                  <option value="delivered">تم التسليم</option>
+                  <option value="cancelled">ملغي</option>
+                  <option value="returned">مرتجع</option>
+                </select>
+              </div>
+              <div>
+                <button
+                  type="button"
+                  className="danger"
+                  disabled={busyId === o.id}
+                  onClick={() => setDeleteTarget(o)}
+                  style={{ padding: '6px 12px', fontSize: '12px' }}
+                >
+                  {busyId === o.id ? '...' : 'Delete'}
+                </button>
+              </div>
             </div>
-            <div>
-              <button
-                type="button"
-                className="danger"
-                disabled={busyId === o.id}
-                onClick={() => handleDelete(o)}
-                style={{ padding: '6px 10px', fontSize: '12px' }}
-              >
-                {busyId === o.id ? '...' : 'مسح ✕'}
-              </button>
-            </div>
-          </div>
-        );
-      })}
-      {orders.length === 0 && (
-        <p style={{ padding: '24px 16px', color: 'var(--color-muted, #888)' }}>
-          No orders found.
-        </p>
-      )}
-    </section>
+          );
+        })}
+        {orders.length === 0 && (
+          <p style={{ padding: '24px 16px', color: 'var(--color-muted, #888)' }}>
+            No orders found.
+          </p>
+        )}
+      </section>
+
+      <ConfirmModal
+        open={Boolean(deleteTarget)}
+        title={`Delete Order #${deleteTarget?.order_number || ''}`}
+        message="Are you sure you want to delete this order? Items will be returned to stock and excluded from revenue."
+        confirmLabel="Delete Order"
+        cancelLabel="Cancel"
+        busy={Boolean(busyId)}
+        onConfirm={confirmDelete}
+        onCancel={() => setDeleteTarget(null)}
+      />
+    </>
   );
 }

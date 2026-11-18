@@ -4,6 +4,7 @@ import { FormEvent, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/browser';
 import { imageUrl } from '@/lib/images';
+import { ConfirmModal } from './ConfirmModal';
 
 const defaultSizes = ['S', 'M', 'L', 'XL'];
 
@@ -58,6 +59,7 @@ export function ProductForm({ initial }: { initial?: Initial }) {
 
   const [busy, setBusy] = useState(false);
   const [deletingImgId, setDeletingImgId] = useState<string | null>(null);
+  const [imgToDelete, setImgToDelete] = useState<any | null>(null);
   const [msg, setMsg] = useState('');
 
   function slugify(v: string) {
@@ -69,13 +71,15 @@ export function ProductForm({ initial }: { initial?: Initial }) {
       .replace(/^-|-$/g, '');
   }
 
-  async function deleteImage(img: any) {
-    if (!confirm('هل تريد حذف هذه الصورة نهائياً؟')) return;
+  async function confirmDeleteImage() {
+    if (!imgToDelete) return;
+    const img = imgToDelete;
     setDeletingImgId(img.id);
     const { error } = await s.from('product_images').delete().eq('id', img.id);
     if (error) {
       alert(error.message);
       setDeletingImgId(null);
+      setImgToDelete(null);
       return;
     }
     if (img.storage_path && !/^https?:\/\//.test(img.storage_path)) {
@@ -83,6 +87,7 @@ export function ProductForm({ initial }: { initial?: Initial }) {
     }
     setExistingImages((prev) => prev.filter((x) => x.id !== img.id));
     setDeletingImgId(null);
+    setImgToDelete(null);
   }
 
   async function moveImage(index: number, direction: -1 | 1) {
@@ -404,7 +409,7 @@ export function ProductForm({ initial }: { initial?: Initial }) {
                   <button
                     type="button"
                     disabled={deletingImgId === img.id}
-                    onClick={() => deleteImage(img)}
+                    onClick={() => setImgToDelete(img)}
                     style={{
                       padding: '4px 10px',
                       border: '1px solid #e5a0a0',
@@ -415,7 +420,7 @@ export function ProductForm({ initial }: { initial?: Initial }) {
                       fontWeight: 600,
                     }}
                   >
-                    {deletingImgId === img.id ? '...' : 'حذف ✕'}
+                    {deletingImgId === img.id ? '...' : 'Delete'}
                   </button>
                 </div>
               </div>
@@ -554,6 +559,17 @@ export function ProductForm({ initial }: { initial?: Initial }) {
       <button className="primary" disabled={busy}>
         {busy ? 'Saving…' : 'Save product'}
       </button>
+
+      <ConfirmModal
+        open={Boolean(imgToDelete)}
+        title="Delete Image"
+        message="Are you sure you want to permanently delete this product image?"
+        confirmLabel="Delete Image"
+        cancelLabel="Cancel"
+        busy={Boolean(deletingImgId)}
+        onConfirm={confirmDeleteImage}
+        onCancel={() => setImgToDelete(null)}
+      />
     </form>
   );
 }

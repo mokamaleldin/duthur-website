@@ -9,7 +9,7 @@ const links = [
   ['/admin/products', 'Products'],
   ['/admin/orders', 'Orders'],
   ['/admin/skus', 'SKUs'],
-  ['/admin/finance', 'الحسابات ورأس المال'],
+  ['/admin/finance', 'Finance'],
   ['/admin/discounts', 'Discounts'],
   ['/admin/messages', 'Messages'],
   ['/admin/settings', 'Settings'],

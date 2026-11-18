@@ -42,7 +42,7 @@ export default async function Dashboard() {
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
           <Link className="primary inline" href="/admin/finance" style={{ background: '#6E705B' }}>
-            الحسابات ورأس المال
+            Finance
           </Link>
           <Link className="primary inline" href="/admin/products/new">
             + Add product

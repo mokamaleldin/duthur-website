@@ -1,6 +1,6 @@
 'use client';
 
-import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FormEvent, useMemo, useState } from 'react';
 import {
   CurrencyCode,
   DEFAULT_FINANCE_LEDGER,
@@ -8,6 +8,7 @@ import {
   FinancialTransaction,
   SupplierEntry,
 } from '@/lib/finance-seed';
+import { ConfirmModal } from './ConfirmModal';
 
 const CATEGORIES = [
   'تشغيل وتطوير',
@@ -33,27 +34,24 @@ function fmtUsd(val: number) {
   })}`;
 }
 
-export function FinanceMasterClient() {
-  const [ledger, setLedger] = useState<DuthurFinanceLedger>(DEFAULT_FINANCE_LEDGER);
-  const [storeOrders, setStoreOrders] = useState<any[]>([]);
-  const [storeProducts, setStoreProducts] = useState<any[]>([]);
-  const [loading, setLoading] = useState(true);
+export function FinanceMasterClient({
+  initialLedger = DEFAULT_FINANCE_LEDGER,
+  initialProducts = [],
+  initialOrders = [],
+}: {
+  initialLedger?: DuthurFinanceLedger;
+  initialProducts?: any[];
+  initialOrders?: any[];
+}) {
+  const [ledger, setLedger] = useState<DuthurFinanceLedger>(initialLedger);
+  const [storeOrders] = useState<any[]>(initialOrders);
+  const [storeProducts] = useState<any[]>(initialProducts);
 
   // Popups (Modals)
   const [showTxModal, setShowTxModal] = useState(false);
   const [showSupModal, setShowSupModal] = useState(false);
-
-  useEffect(() => {
-    fetch('/api/admin/finance')
-      .then((r) => r.json())
-      .then((res) => {
-        if (res.ledger) setLedger(res.ledger);
-        if (res.orders) setStoreOrders(res.orders);
-        if (res.products) setStoreProducts(res.products);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
-  }, []);
+  const [deleteTxTarget, setDeleteTxTarget] = useState<FinancialTransaction | null>(null);
+  const [deleteSupTarget, setDeleteSupTarget] = useState<SupplierEntry | null>(null);
 
   async function persistLedger(nextLedger: DuthurFinanceLedger) {
     setLedger(nextLedger);
@@ -85,9 +83,8 @@ export function FinanceMasterClient() {
     );
     const totalExpensesUsd = rate > 0 ? totalExpensesTry / rate : 0;
 
-    // Confirmed receipts from ledger
     const ledgerIncomesTry = incomes
-      .filter((i) => i.status !== 'no_charge' && i.status !== 'estimated_amount')
+      .filter((i) => i.status !== 'no_charge')
       .reduce(
         (a, i) =>
           a +
@@ -97,7 +94,6 @@ export function FinanceMasterClient() {
         0
       );
 
-    // Valid paid/confirmed website orders
     const validOrders = storeOrders.filter(
       (o) => !VOID_ORDER_STATUSES.has(o.order_status) && o.admin_note !== '__DELETED__'
     );
@@ -117,7 +113,6 @@ export function FinanceMasterClient() {
     const remainingCapitalTry = Math.max(0, totalExpensesTry - totalSalesTry);
     const remainingCapitalUsd = rate > 0 ? remainingCapitalTry / rate : 0;
 
-    // Remaining stock from live products (or fallback to ledger 237)
     let remainingStock = 237;
     if (storeProducts.length > 0) {
       const sumVariants = storeProducts.reduce(
@@ -178,8 +173,10 @@ export function FinanceMasterClient() {
     });
   }
 
-  function handleDeleteTransaction(id: string) {
-    if (!confirm('هل تريد مسح هذا البند؟')) return;
+  function confirmDeleteTransaction() {
+    if (!deleteTxTarget) return;
+    const id = deleteTxTarget.id;
+    setDeleteTxTarget(null);
     persistLedger({
       ...ledger,
       transactions: ledger.transactions.filter((t) => t.id !== id),
@@ -213,15 +210,16 @@ export function FinanceMasterClient() {
     });
   }
 
-  function handleDeleteSupplier(id: string) {
-    if (!confirm('مسح هذا المورد؟')) return;
+  function confirmDeleteSupplier() {
+    if (!deleteSupTarget) return;
+    const id = deleteSupTarget.id;
+    setDeleteSupTarget(null);
     persistLedger({
       ...ledger,
       suppliers: ledger.suppliers.filter((s) => s.id !== id),
     });
   }
 
-  // Visible transactions (exclude 0 TL gift or historical estimated clutter if needed, show clean list)
   const visibleTransactions = useMemo(
     () =>
       ledger.transactions.filter(
@@ -230,30 +228,13 @@ export function FinanceMasterClient() {
     [ledger.transactions]
   );
 
-  if (loading) {
-    return (
-      <div className="admin-card" dir="rtl" style={{ padding: '32px', textAlign: 'center' }}>
-        جاري التحميل...
-      </div>
-    );
-  }
-
   return (
-    <div dir="rtl" style={{ fontFamily: 'var(--font-body), sans-serif', color: '#171717' }}>
-      {/* SIMPLE HEADER + USD EXCHANGE RATE */}
-      <div
-        style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          flexWrap: 'wrap',
-          gap: '14px',
-          marginBottom: '22px',
-        }}
-      >
-        <h1 style={{ margin: 0, fontSize: '30px', fontWeight: 700 }}>
-          الحسابات ورأس المال
-        </h1>
+    <>
+      <div className="admin-title">
+        <div>
+          <p>Accounting</p>
+          <h1>Finance</h1>
+        </div>
 
         <div
           style={{
@@ -267,7 +248,7 @@ export function FinanceMasterClient() {
           }}
         >
           <span style={{ fontSize: '13px', color: '#555', fontWeight: 600 }}>
-            سعر الدولار (1$):
+            USD Rate (1$):
           </span>
           <input
             type="number"
@@ -292,85 +273,40 @@ export function FinanceMasterClient() {
       </div>
 
       {/* 4 CLEAN KPI CARDS */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))',
-          gap: '14px',
-          marginBottom: '24px',
-        }}
-      >
-        <div className="admin-card" style={{ marginBottom: 0 }}>
-          <span style={{ fontSize: '13px', color: '#666', fontWeight: 600 }}>
-            إجمالي المصاريف
-          </span>
-          <strong
-            style={{
-              fontSize: '28px',
-              display: 'block',
-              margin: '8px 0 4px',
-              color: '#b94c4c',
-            }}
-          >
+      <div className="stat-grid">
+        <div>
+          <span>Total Expenses</span>
+          <strong style={{ color: '#b94c4c', marginBottom: '4px' }}>
             {fmtTry(stats.totalExpensesTry)}
           </strong>
-          <small style={{ color: '#777', fontSize: '14px', fontWeight: 600 }} dir="ltr">
+          <small style={{ color: '#777', fontSize: '14px', fontWeight: 600 }}>
             {fmtUsd(stats.totalExpensesUsd)}
           </small>
         </div>
 
-        <div className="admin-card" style={{ marginBottom: 0 }}>
-          <span style={{ fontSize: '13px', color: '#666', fontWeight: 600 }}>
-            المبيعات المؤكدة
-          </span>
-          <strong
-            style={{
-              fontSize: '28px',
-              display: 'block',
-              margin: '8px 0 4px',
-              color: '#2b8a3e',
-            }}
-          >
+        <div>
+          <span>Confirmed Sales</span>
+          <strong style={{ color: '#2b8a3e', marginBottom: '4px' }}>
             {fmtTry(stats.totalSalesTry)}
           </strong>
-          <small style={{ color: '#777', fontSize: '14px', fontWeight: 600 }} dir="ltr">
+          <small style={{ color: '#777', fontSize: '14px', fontWeight: 600 }}>
             {fmtUsd(stats.totalSalesUsd)}
           </small>
         </div>
 
-        <div
-          className="admin-card"
-          style={{
-            marginBottom: 0,
-            background: '#171717',
-            color: '#F3EFE6',
-          }}
-        >
-          <span style={{ fontSize: '13px', color: '#C8C1B5', fontWeight: 600 }}>
-            المتبقي لاسترداد رأس المال
-          </span>
-          <strong
-            style={{
-              fontSize: '28px',
-              display: 'block',
-              margin: '8px 0 4px',
-              color: '#B69C7A',
-            }}
-          >
+        <div style={{ background: '#171717', color: '#F3EFE6' }}>
+          <span style={{ color: '#C8C1B5' }}>Remaining Capital</span>
+          <strong style={{ color: '#B69C7A', marginBottom: '4px' }}>
             {fmtTry(stats.remainingCapitalTry)}
           </strong>
-          <small style={{ color: '#C8C1B5', fontSize: '14px', fontWeight: 600 }} dir="ltr">
+          <small style={{ color: '#C8C1B5', fontSize: '14px', fontWeight: 600 }}>
             {fmtUsd(stats.remainingCapitalUsd)}
           </small>
         </div>
 
-        <div className="admin-card" style={{ marginBottom: 0 }}>
-          <span style={{ fontSize: '13px', color: '#666', fontWeight: 600 }}>
-            المخزون الفعلي المتبقي
-          </span>
-          <strong style={{ fontSize: '28px', display: 'block', margin: '8px 0 4px' }}>
-            {stats.remainingStock}
-          </strong>
+        <div>
+          <span>Remaining Stock</span>
+          <strong>{stats.remainingStock}</strong>
         </div>
       </div>
 
@@ -384,7 +320,7 @@ export function FinanceMasterClient() {
             marginBottom: '16px',
           }}
         >
-          <h2 style={{ margin: 0, fontSize: '19px' }}>المصاريف والأرباح</h2>
+          <h2 style={{ margin: 0 }}>Expenses & Revenue</h2>
           <button
             type="button"
             className="primary inline"
@@ -395,93 +331,87 @@ export function FinanceMasterClient() {
               fontSize: '13px',
             }}
           >
-            + إضافة
+            + Add Entry
           </button>
         </div>
 
-        <div className="table-wrap" style={{ marginTop: 0 }}>
-          <table>
-            <thead>
-              <tr style={{ background: '#f5f5f3' }}>
-                <th>البند</th>
-                <th>النوع</th>
-                <th>التصنيف</th>
-                <th>التاريخ</th>
-                <th>المبلغ</th>
-                <th>مسح</th>
-              </tr>
-            </thead>
-            <tbody>
-              {visibleTransactions.map((t) => {
-                const isUsd = t.currency_original === 'USD';
-                const tryEquivalent = isUsd
-                  ? t.amount_original * rate
-                  : t.amount_original;
-                const usdEquivalent = isUsd
-                  ? t.amount_original
-                  : t.amount_original / rate;
-
-                return (
-                  <tr key={t.id}>
-                    <td>
-                      <strong>{t.title}</strong>
-                      {t.details && (
-                        <small style={{ display: 'block', color: '#777' }}>{t.details}</small>
-                      )}
-                    </td>
-                    <td>
-                      <span
-                        style={{
-                          display: 'inline-block',
-                          padding: '3px 9px',
-                          borderRadius: '99px',
-                          fontSize: '12px',
-                          fontWeight: 600,
-                          background: t.type === 'expense' ? '#f4d8d8' : '#d8f0dc',
-                          color: t.type === 'expense' ? '#991b1b' : '#1b5e20',
-                        }}
-                      >
-                        {t.type === 'expense' ? 'مصروف' : 'إيراد'}
-                      </span>
-                    </td>
-                    <td style={{ color: '#555' }}>{t.category || '-'}</td>
-                    <td style={{ color: '#666', whiteSpace: 'nowrap' }}>
-                      {t.date || '-'}
-                    </td>
-                    <td style={{ direction: 'ltr', textAlign: 'right' }}>
-                      <strong
-                        style={{
-                          display: 'block',
-                          fontSize: '15px',
-                          color: t.type === 'expense' ? '#b94c4c' : '#2b8a3e',
-                        }}
-                      >
-                        {isUsd
-                          ? `$${t.amount_original.toFixed(2)}`
-                          : `${t.amount_original.toFixed(2)}₺`}
-                      </strong>
-                      <small style={{ color: '#888', fontSize: '12px' }}>
-                        {isUsd
-                          ? `${tryEquivalent.toFixed(0)}₺`
-                          : `$${usdEquivalent.toFixed(2)}`}
-                      </small>
-                    </td>
-                    <td>
-                      <button
-                        type="button"
-                        className="danger"
-                        onClick={() => handleDeleteTransaction(t.id)}
-                        style={{ padding: '4px 10px', fontSize: '11px' }}
-                      >
-                        مسح ✕
-                      </button>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+        <div
+          className="admin-table head"
+          style={{ gridTemplateColumns: '1.8fr .8fr 1fr .9fr 1fr auto' }}
+        >
+          <span>Title</span>
+          <span>Type</span>
+          <span>Category</span>
+          <span>Date</span>
+          <span>Amount</span>
+          <span>Delete</span>
         </div>
+
+        {visibleTransactions.map((t) => {
+          const isUsd = t.currency_original === 'USD';
+          const tryEquivalent = isUsd
+            ? t.amount_original * rate
+            : t.amount_original;
+          const usdEquivalent = isUsd
+            ? t.amount_original
+            : t.amount_original / rate;
+
+          return (
+            <div
+              className="admin-table table-row"
+              key={t.id}
+              style={{ gridTemplateColumns: '1.8fr .8fr 1fr .9fr 1fr auto' }}
+            >
+              <div>
+                <strong>{t.title}</strong>
+                {t.details && (
+                  <small style={{ display: 'block', color: '#777' }}>{t.details}</small>
+                )}
+              </div>
+              <div>
+                <span
+                  className={`status ${t.type === 'expense' ? 'cancelled' : 'delivered'}`}
+                >
+                  {t.type === 'expense' ? 'Expense' : 'Income'}
+                </span>
+              </div>
+              <span style={{ color: '#555', fontSize: '13px' }}>
+                {t.category || '-'}
+              </span>
+              <span style={{ color: '#666', fontSize: '13px' }}>
+                {t.date || '-'}
+              </span>
+              <div>
+                <strong
+                  style={{
+                    display: 'block',
+                    fontSize: '14px',
+                    color: t.type === 'expense' ? '#b94c4c' : '#2b8a3e',
+                  }}
+                >
+                  {isUsd
+                    ? `$${t.amount_original.toFixed(2)}`
+                    : `${t.amount_original.toFixed(2)}₺`}
+                </strong>
+                <small style={{ color: '#888', fontSize: '12px' }}>
+                  {isUsd
+                    ? `${tryEquivalent.toFixed(0)}₺`
+                    : `$${usdEquivalent.toFixed(2)}`}
+                </small>
+              </div>
+              <div>
+                <button
+                  type="button"
+                  className="danger"
+                  onClick={() => setDeleteTxTarget(t)}
+                  style={{ padding: '5px 12px', fontSize: '12px' }}
+                >
+                  Delete
+                </button>
+              </div>
+            </div>
+          );
+        })}
       </section>
 
       {/* SUPPLIERS DIRECTORY SECTION */}
@@ -494,7 +424,7 @@ export function FinanceMasterClient() {
             marginBottom: '16px',
           }}
         >
-          <h2 style={{ margin: 0, fontSize: '19px' }}>دليل الموردين</h2>
+          <h2 style={{ margin: 0 }}>Suppliers</h2>
           <button
             type="button"
             className="primary inline"
@@ -505,54 +435,50 @@ export function FinanceMasterClient() {
               fontSize: '13px',
             }}
           >
-            + إضافة مورد
+            + Add Supplier
           </button>
         </div>
 
-        {ledger.suppliers.length === 0 ? (
-          <p className="muted" style={{ margin: 0 }}>
-            لا يوجد موردون حالياً.
-          </p>
-        ) : (
-          <div className="table-wrap" style={{ marginTop: 0 }}>
-            <table>
-              <thead>
-                <tr style={{ background: '#f5f5f3' }}>
-                  <th>اسم المصنع / المورد</th>
-                  <th>الخدمة</th>
-                  <th>العنوان</th>
-                  <th>رقم الهاتف</th>
-                  <th>ملاحظة</th>
-                  <th>مسح</th>
-                </tr>
-              </thead>
-              <tbody>
-                {ledger.suppliers.map((sup) => (
-                  <tr key={sup.id}>
-                    <td>
-                      <strong>{sup.name}</strong>
-                    </td>
-                    <td>{sup.service || '-'}</td>
-                    <td>{sup.address || '-'}</td>
-                    <td dir="ltr" style={{ textAlign: 'right' }}>
-                      {sup.phone || '-'}
-                    </td>
-                    <td>{sup.notes || '-'}</td>
-                    <td>
-                      <button
-                        type="button"
-                        className="danger"
-                        onClick={() => handleDeleteSupplier(sup.id)}
-                        style={{ padding: '4px 10px', fontSize: '11px' }}
-                      >
-                        مسح ✕
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+        <div
+          className="admin-table head"
+          style={{ gridTemplateColumns: '1.4fr 1.2fr 1.2fr 1fr 1.2fr auto' }}
+        >
+          <span>Name</span>
+          <span>Service</span>
+          <span>Address</span>
+          <span>Phone</span>
+          <span>Notes</span>
+          <span>Delete</span>
+        </div>
+
+        {ledger.suppliers.map((sup) => (
+          <div
+            className="admin-table table-row"
+            key={sup.id}
+            style={{ gridTemplateColumns: '1.4fr 1.2fr 1.2fr 1fr 1.2fr auto' }}
+          >
+            <strong>{sup.name}</strong>
+            <span>{sup.service || '-'}</span>
+            <span>{sup.address || '-'}</span>
+            <span dir="ltr">{sup.phone || '-'}</span>
+            <span>{sup.notes || '-'}</span>
+            <div>
+              <button
+                type="button"
+                className="danger"
+                onClick={() => setDeleteSupTarget(sup)}
+                style={{ padding: '5px 12px', fontSize: '12px' }}
+              >
+                Delete
+              </button>
+            </div>
           </div>
+        ))}
+
+        {ledger.suppliers.length === 0 && (
+          <p className="muted" style={{ padding: '16px 0 4px', margin: 0 }}>
+            No suppliers added yet.
+          </p>
         )}
       </section>
 
@@ -563,10 +489,11 @@ export function FinanceMasterClient() {
           style={{
             position: 'fixed',
             inset: 0,
-            background: 'rgba(0,0,0,0.55)',
+            background: 'rgba(15, 15, 15, 0.65)',
+            backdropFilter: 'blur(4px)',
             display: 'grid',
             placeItems: 'center',
-            zIndex: 1000,
+            zIndex: 1500,
             padding: '16px',
           }}
         >
@@ -574,10 +501,10 @@ export function FinanceMasterClient() {
             onClick={(e) => e.stopPropagation()}
             style={{
               background: '#fff',
-              borderRadius: '14px',
+              borderRadius: '16px',
               width: 'min(480px, 100%)',
-              padding: '24px',
-              boxShadow: '0 20px 50px rgba(0,0,0,0.25)',
+              padding: '26px',
+              boxShadow: '0 24px 60px rgba(0,0,0,0.35)',
             }}
           >
             <div
@@ -588,7 +515,20 @@ export function FinanceMasterClient() {
                 marginBottom: '18px',
               }}
             >
-              <h3 style={{ margin: 0, fontSize: '18px' }}>إضافة مصروف / إيراد</h3>
+              <div>
+                <span
+                  style={{
+                    fontSize: '11px',
+                    letterSpacing: '0.1em',
+                    textTransform: 'uppercase',
+                    color: '#888',
+                    fontWeight: 700,
+                  }}
+                >
+                  DUTHUR
+                </span>
+                <h3 style={{ margin: '2px 0 0', fontSize: '20px' }}>Add Entry</h3>
+              </div>
               <button
                 type="button"
                 onClick={() => setShowTxModal(false)}
@@ -608,41 +548,41 @@ export function FinanceMasterClient() {
               style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}
             >
               <label style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '13px' }}>
-                البند *
+                Title (البند) *
                 <input
                   required
                   name="title"
-                  placeholder="اسم البند..."
+                  placeholder="Entry title..."
                   style={{ padding: '10px', borderRadius: '8px', border: '1px solid #ccc' }}
                 />
               </label>
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '13px' }}>
-                  النوع *
+                  Type (النوع) *
                   <select
                     name="type"
                     style={{ padding: '10px', borderRadius: '8px', border: '1px solid #ccc' }}
                   >
-                    <option value="expense">مصروف</option>
-                    <option value="income">إيراد</option>
+                    <option value="expense">Expense (مصروف)</option>
+                    <option value="income">Income (إيراد)</option>
                   </select>
                 </label>
 
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '13px' }}>
-                  العملة *
+                  Currency (العملة) *
                   <select
                     name="currency"
                     style={{ padding: '10px', borderRadius: '8px', border: '1px solid #ccc' }}
                   >
-                    <option value="TRY">TRY (ليرة)</option>
-                    <option value="USD">USD (دولار)</option>
+                    <option value="TRY">TRY (₺)</option>
+                    <option value="USD">USD ($)</option>
                   </select>
                 </label>
               </div>
 
               <label style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '13px' }}>
-                المبلغ *
+                Amount (المبلغ) *
                 <input
                   required
                   type="number"
@@ -655,7 +595,7 @@ export function FinanceMasterClient() {
 
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px' }}>
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '13px' }}>
-                  التصنيف (اختياري)
+                  Category (التصنيف)
                   <select
                     name="category"
                     defaultValue="تشغيل وتطوير"
@@ -670,7 +610,7 @@ export function FinanceMasterClient() {
                 </label>
 
                 <label style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '13px' }}>
-                  التاريخ (اختياري)
+                  Date (التاريخ)
                   <input
                     type="date"
                     name="date"
@@ -681,10 +621,10 @@ export function FinanceMasterClient() {
               </div>
 
               <label style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '13px' }}>
-                تفاصيل (اختياري)
+                Details (تفاصيل اختياري)
                 <input
                   name="details"
-                  placeholder="ملاحظة مختصرة..."
+                  placeholder="Optional note..."
                   style={{ padding: '10px', borderRadius: '8px', border: '1px solid #ccc' }}
                 />
               </label>
@@ -700,7 +640,7 @@ export function FinanceMasterClient() {
                     background: '#fff',
                   }}
                 >
-                  إلغاء
+                  Cancel
                 </button>
                 <button
                   type="submit"
@@ -712,7 +652,7 @@ export function FinanceMasterClient() {
                     color: '#fff',
                   }}
                 >
-                  حفظ
+                  Save
                 </button>
               </div>
             </form>
@@ -727,10 +667,11 @@ export function FinanceMasterClient() {
           style={{
             position: 'fixed',
             inset: 0,
-            background: 'rgba(0,0,0,0.55)',
+            background: 'rgba(15, 15, 15, 0.65)',
+            backdropFilter: 'blur(4px)',
             display: 'grid',
             placeItems: 'center',
-            zIndex: 1000,
+            zIndex: 1500,
             padding: '16px',
           }}
         >
@@ -738,10 +679,10 @@ export function FinanceMasterClient() {
             onClick={(e) => e.stopPropagation()}
             style={{
               background: '#fff',
-              borderRadius: '14px',
+              borderRadius: '16px',
               width: 'min(460px, 100%)',
-              padding: '24px',
-              boxShadow: '0 20px 50px rgba(0,0,0,0.25)',
+              padding: '26px',
+              boxShadow: '0 24px 60px rgba(0,0,0,0.35)',
             }}
           >
             <div
@@ -752,7 +693,20 @@ export function FinanceMasterClient() {
                 marginBottom: '18px',
               }}
             >
-              <h3 style={{ margin: 0, fontSize: '18px' }}>إضافة مصنع / مورد</h3>
+              <div>
+                <span
+                  style={{
+                    fontSize: '11px',
+                    letterSpacing: '0.1em',
+                    textTransform: 'uppercase',
+                    color: '#888',
+                    fontWeight: 700,
+                  }}
+                >
+                  DUTHUR
+                </span>
+                <h3 style={{ margin: '2px 0 0', fontSize: '20px' }}>Add Supplier</h3>
+              </div>
               <button
                 type="button"
                 onClick={() => setShowSupModal(false)}
@@ -772,35 +726,35 @@ export function FinanceMasterClient() {
               style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}
             >
               <label style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '13px' }}>
-                اسم المصنع أو المورد *
+                Supplier Name *
                 <input
                   required
                   name="name"
-                  placeholder="الاسم..."
+                  placeholder="Name..."
                   style={{ padding: '10px', borderRadius: '8px', border: '1px solid #ccc' }}
                 />
               </label>
 
               <label style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '13px' }}>
-                الخدمة (اختياري)
+                Service (Optional)
                 <input
                   name="service"
-                  placeholder="تصنيع، طباعة، تغليف..."
+                  placeholder="Manufacturing, printing, packaging..."
                   style={{ padding: '10px', borderRadius: '8px', border: '1px solid #ccc' }}
                 />
               </label>
 
               <label style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '13px' }}>
-                العنوان (اختياري)
+                Address (Optional)
                 <input
                   name="address"
-                  placeholder="العنوان..."
+                  placeholder="Address..."
                   style={{ padding: '10px', borderRadius: '8px', border: '1px solid #ccc' }}
                 />
               </label>
 
               <label style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '13px' }}>
-                رقم الهاتف (اختياري)
+                Phone Number (Optional)
                 <input
                   name="phone"
                   dir="ltr"
@@ -810,10 +764,10 @@ export function FinanceMasterClient() {
               </label>
 
               <label style={{ display: 'flex', flexDirection: 'column', gap: '5px', fontSize: '13px' }}>
-                ملاحظة (اختياري)
+                Notes (Optional)
                 <input
                   name="notes"
-                  placeholder="ملاحظة..."
+                  placeholder="Notes..."
                   style={{ padding: '10px', borderRadius: '8px', border: '1px solid #ccc' }}
                 />
               </label>
@@ -829,7 +783,7 @@ export function FinanceMasterClient() {
                     background: '#fff',
                   }}
                 >
-                  إلغاء
+                  Cancel
                 </button>
                 <button
                   type="submit"
@@ -841,13 +795,34 @@ export function FinanceMasterClient() {
                     color: '#fff',
                   }}
                 >
-                  حفظ
+                  Save
                 </button>
               </div>
             </form>
           </div>
         </div>
       )}
-    </div>
+
+      {/* CUSTOM BRANDED DELETE CONFIRMATIONS */}
+      <ConfirmModal
+        open={Boolean(deleteTxTarget)}
+        title="Delete Entry"
+        message={`Are you sure you want to delete "${deleteTxTarget?.title || ''}"?`}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        onConfirm={confirmDeleteTransaction}
+        onCancel={() => setDeleteTxTarget(null)}
+      />
+
+      <ConfirmModal
+        open={Boolean(deleteSupTarget)}
+        title="Delete Supplier"
+        message={`Are you sure you want to delete supplier "${deleteSupTarget?.name || ''}"?`}
+        confirmLabel="Delete"
+        cancelLabel="Cancel"
+        onConfirm={confirmDeleteSupplier}
+        onCancel={() => setDeleteSupTarget(null)}
+      />
+    </>
   );
 }

@@ -5,16 +5,47 @@ import path from 'path';
 import fs from 'fs';
 
 const FINANCE_JSON_PATH = path.join(process.cwd(), 'supabase', 'duthur_finance_ledger.json');
+const DB_MARKER_PREFIX = '__DUTHUR_LEDGER_V3__:';
 
 export type ExtendedDuthurLedger = DuthurFinanceLedger & {
   deleted_order_ids?: string[];
   deleted_message_ids?: string[];
+  deleted_discount_ids?: string[];
+  discount_product_map?: Record<string, string[]>;
 };
 
 export async function loadLedgerFromStorageOrLocal(
   supabase: any
 ): Promise<ExtendedDuthurLedger> {
-  // 1. Prefer local JSON file when present (instant on local dev)
+  // 1. Primary source of truth: store_settings.announcement_tr in Supabase DB (works on Vercel & Local!)
+  try {
+    const { data: st } = await supabase
+      .from('store_settings')
+      .select('announcement_tr')
+      .eq('id', true)
+      .maybeSingle();
+
+    const raw = st?.announcement_tr || '';
+    if (typeof raw === 'string' && raw.includes(DB_MARKER_PREFIX)) {
+      const jsonPart = raw.split(DB_MARKER_PREFIX)[1];
+      if (jsonPart) {
+        const parsed = JSON.parse(jsonPart);
+        if (parsed && parsed.version) {
+          return {
+            ...parsed,
+            deleted_order_ids: parsed.deleted_order_ids || [],
+            deleted_message_ids: parsed.deleted_message_ids || [],
+            deleted_discount_ids: parsed.deleted_discount_ids || [],
+            discount_product_map: parsed.discount_product_map || {},
+          };
+        }
+      }
+    }
+  } catch {
+    // ignore DB read error
+  }
+
+  // 2. Fallback to local file
   try {
     if (fs.existsSync(FINANCE_JSON_PATH)) {
       const text = await fs.promises.readFile(FINANCE_JSON_PATH, 'utf8');
@@ -24,6 +55,8 @@ export async function loadLedgerFromStorageOrLocal(
           ...parsed,
           deleted_order_ids: parsed.deleted_order_ids || [],
           deleted_message_ids: parsed.deleted_message_ids || [],
+          deleted_discount_ids: parsed.deleted_discount_ids || [],
+          discount_product_map: parsed.discount_product_map || {},
         };
       }
     }
@@ -31,68 +64,51 @@ export async function loadLedgerFromStorageOrLocal(
     // ignore file error
   }
 
-  // 2. Fallback to Supabase storage bucket 'product-images'
-  try {
-    const { data, error } = await supabase.storage
-      .from('product-images')
-      .download('admin/finance_ledger_v2.json');
-    if (!error && data) {
-      const text = await data.text();
-      const parsed = JSON.parse(text);
-      if (parsed && parsed.version) {
-        const result: ExtendedDuthurLedger = {
-          ...parsed,
-          deleted_order_ids: parsed.deleted_order_ids || [],
-          deleted_message_ids: parsed.deleted_message_ids || [],
-        };
-        try {
-          await fs.promises.mkdir(path.dirname(FINANCE_JSON_PATH), { recursive: true });
-          await fs.promises.writeFile(
-            FINANCE_JSON_PATH,
-            JSON.stringify(result, null, 2),
-            'utf8'
-          );
-        } catch {}
-        return result;
-      }
-    }
-  } catch {
-    // ignore storage read error
-  }
-
-  const fresh: ExtendedDuthurLedger = {
+  return {
     ...structuredClone(DEFAULT_FINANCE_LEDGER),
     deleted_order_ids: [],
     deleted_message_ids: [],
+    deleted_discount_ids: [],
+    discount_product_map: {},
   };
-  return fresh;
 }
 
 export async function saveLedgerToStorageAndLocal(
   supabase: any,
   ledger: ExtendedDuthurLedger
 ) {
-  const jsonStr = JSON.stringify(ledger, null, 2);
+  const jsonStr = JSON.stringify(ledger);
 
-  // 1. Save to local JSON file if writable
+  // 1. Save into store_settings.announcement_tr in Supabase DB (always succeeds for admins on Vercel!)
   try {
-    await fs.promises.mkdir(path.dirname(FINANCE_JSON_PATH), { recursive: true });
-    await fs.promises.writeFile(FINANCE_JSON_PATH, jsonStr, 'utf8');
-  } catch {
-    // ignore on read-only serverless fs
+    const { data: st } = await supabase
+      .from('store_settings')
+      .select('announcement_tr')
+      .eq('id', true)
+      .maybeSingle();
+
+    const currentRaw = st?.announcement_tr || '2 ürün al, ücretsiz kargo kazan';
+    const cleanPrefix = currentRaw.split(DB_MARKER_PREFIX)[0];
+    const encoded = `${cleanPrefix}${DB_MARKER_PREFIX}${jsonStr}`;
+
+    await supabase
+      .from('store_settings')
+      .update({ announcement_tr: encoded })
+      .eq('id', true);
+  } catch (err) {
+    console.warn('[Finance API] Could not save ledger to store_settings:', err);
   }
 
-  // 2. Save to Supabase storage bucket
+  // 2. Save to local JSON file if writable
   try {
-    const blob = new Blob([jsonStr], { type: 'application/json' });
-    await supabase.storage
-      .from('product-images')
-      .upload('admin/finance_ledger_v2.json', blob, {
-        contentType: 'application/json',
-        upsert: true,
-      });
-  } catch (err) {
-    console.warn('[Finance API] Could not upload to Supabase storage:', err);
+    await fs.promises.mkdir(path.dirname(FINANCE_JSON_PATH), { recursive: true });
+    await fs.promises.writeFile(
+      FINANCE_JSON_PATH,
+      JSON.stringify(ledger, null, 2),
+      'utf8'
+    );
+  } catch {
+    // ignore on read-only serverless fs
   }
 }
 
@@ -109,22 +125,6 @@ export async function GET() {
 
     const ledger = await loadLedgerFromStorageOrLocal(supabase);
 
-    // Sync store prices once if not synced yet
-    if (!ledger.store_prices_synced) {
-      for (const d of ledger.designs) {
-        await supabase
-          .from('products')
-          .update({ base_price: d.sale_price_try })
-          .eq('id', d.product_id);
-        await supabase
-          .from('product_variants')
-          .update({ price: d.sale_price_try })
-          .eq('product_id', d.product_id);
-      }
-      ledger.store_prices_synced = true;
-      await saveLedgerToStorageAndLocal(supabase, ledger);
-    }
-
     const [{ data: products }, { data: orders }] = await Promise.all([
       supabase
         .from('products')
@@ -137,7 +137,9 @@ export async function GET() {
     ]);
 
     const deletedOrderIds = new Set(ledger.deleted_order_ids || []);
-    const activeOrders = (orders || []).filter((o: any) => !deletedOrderIds.has(o.id));
+    const activeOrders = (orders || []).filter(
+      (o: any) => !deletedOrderIds.has(o.id) && o.admin_note !== '__DELETED__'
+    );
 
     return NextResponse.json({
       ledger,
@@ -169,7 +171,6 @@ export async function POST(req: NextRequest) {
     // Action: delete order
     if (body.action === 'delete_order' && body.orderId) {
       const orderId = String(body.orderId);
-      // Try DB delete first
       await supabase.from('order_items').delete().eq('order_id', orderId);
       const { data: deletedRows } = await supabase
         .from('orders')
@@ -177,7 +178,6 @@ export async function POST(req: NextRequest) {
         .eq('id', orderId)
         .select('id');
 
-      // Fallback: if RLS prevented row deletion, mark order as cancelled in DB AND record in deleted_order_ids
       if (!deletedRows || deletedRows.length === 0) {
         await supabase
           .from('orders')
@@ -206,6 +206,45 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: true });
     }
 
+    // Action: delete discount
+    if (body.action === 'delete_discount' && body.discountId) {
+      const discountId = String(body.discountId);
+      const { data: deletedRows } = await supabase
+        .from('discount_codes')
+        .delete()
+        .eq('id', discountId)
+        .select('id');
+
+      if (!deletedRows || deletedRows.length === 0) {
+        await supabase
+          .from('discount_codes')
+          .update({ active: false })
+          .eq('id', discountId);
+      }
+
+      const nextDeleted = Array.from(
+        new Set([...(current.deleted_discount_ids || []), discountId])
+      );
+      const updated = { ...current, deleted_discount_ids: nextDeleted };
+      await saveLedgerToStorageAndLocal(supabase, updated);
+      return NextResponse.json({ success: true });
+    }
+
+    // Action: save discount products map
+    if (body.action === 'save_discount_products' && body.code) {
+      const code = String(body.code).toUpperCase();
+      const productIds = Array.isArray(body.productIds) ? body.productIds : [];
+      const updated = {
+        ...current,
+        discount_product_map: {
+          ...(current.discount_product_map || {}),
+          [code]: productIds,
+        },
+      };
+      await saveLedgerToStorageAndLocal(supabase, updated);
+      return NextResponse.json({ success: true });
+    }
+
     const ledger = body.ledger as ExtendedDuthurLedger;
     if (!ledger || !ledger.version) {
       return NextResponse.json({ error: 'Invalid ledger payload' }, { status: 400 });
@@ -216,6 +255,10 @@ export async function POST(req: NextRequest) {
       deleted_order_ids: ledger.deleted_order_ids || current.deleted_order_ids || [],
       deleted_message_ids:
         ledger.deleted_message_ids || current.deleted_message_ids || [],
+      deleted_discount_ids:
+        ledger.deleted_discount_ids || current.deleted_discount_ids || [],
+      discount_product_map:
+        ledger.discount_product_map || current.discount_product_map || {},
     };
 
     if (body.syncPricesToStore) {
