@@ -1,11 +1,9 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { createClient } from '@/lib/supabase/browser';
 
 export function MessagesListClient({ initialMessages }: { initialMessages: any[] }) {
-  const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
   const [messages, setMessages] = useState(initialMessages);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -13,12 +11,19 @@ export function MessagesListClient({ initialMessages }: { initialMessages: any[]
   async function handleDelete(id: string) {
     if (!confirm('هل تريد مسح هذه الرسالة نهائياً؟')) return;
     setBusyId(id);
-    const { error } = await supabase.from('contact_messages').delete().eq('id', id);
+
+    const res = await fetch('/api/admin/finance', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'delete_message', messageId: id }),
+    });
+
     setBusyId(null);
-    if (error) {
-      alert(error.message);
+    if (!res.ok) {
+      alert('حدث خطأ أثناء مسح الرسالة');
       return;
     }
+
     setMessages((prev) => prev.filter((m) => m.id !== id));
     router.refresh();
   }

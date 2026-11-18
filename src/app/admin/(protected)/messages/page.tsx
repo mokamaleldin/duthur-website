@@ -1,16 +1,20 @@
 import { createClient } from '@/lib/supabase/server';
 import { MessagesListClient } from '@/components/admin/MessagesListClient';
+import { loadLedgerFromStorageOrLocal } from '@/app/api/admin/finance/route';
 
 export default async function Page() {
   const s = await createClient();
-  const { data, error } = await s
-    .from('contact_messages')
-    .select('*')
-    .order('created_at', { ascending: false });
+  const [{ data, error }, ledger] = await Promise.all([
+    s.from('contact_messages').select('*').order('created_at', { ascending: false }),
+    loadLedgerFromStorageOrLocal(s),
+  ]);
 
   if (error) {
     console.error('[Admin Messages] Error fetching contact messages:', error);
   }
+
+  const deletedIds = new Set(ledger.deleted_message_ids || []);
+  const visibleMessages = (data || []).filter((m) => !deletedIds.has(m.id));
 
   return (
     <>
@@ -31,7 +35,7 @@ export default async function Page() {
           <p>Error loading messages: {error.message}</p>
         </div>
       )}
-      <MessagesListClient initialMessages={data || []} />
+      <MessagesListClient initialMessages={visibleMessages} />
     </>
   );
 }

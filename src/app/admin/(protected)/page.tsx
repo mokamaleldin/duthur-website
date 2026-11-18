@@ -1,5 +1,6 @@
 import { createClient } from '@/lib/supabase/server';
 import Link from 'next/link';
+import { loadLedgerFromStorageOrLocal } from '@/app/api/admin/finance/route';
 
 export default async function Dashboard() {
   const s = await createClient();
@@ -7,19 +8,30 @@ export default async function Dashboard() {
     { count: products, error: productsError },
     { data: orderRows, error: orderRowsError },
     { data: recent, error: recentError },
+    ledger,
   ] = await Promise.all([
     s.from('products').select('*', { count: 'exact', head: true }),
-    s.from('orders').select('total,order_status'),
-    s.from('orders').select('*').order('created_at', { ascending: false }).limit(8),
+    s.from('orders').select('id,total,order_status,admin_note'),
+    s.from('orders').select('*').order('created_at', { ascending: false }).limit(12),
+    loadLedgerFromStorageOrLocal(s),
   ]);
 
   if (productsError) console.error('[Dashboard] Error fetching products count:', productsError);
   if (orderRowsError) console.error('[Dashboard] Error fetching order rows:', orderRowsError);
   if (recentError) console.error('[Dashboard] Error fetching recent orders:', recentError);
 
+  const deletedIds = new Set(ledger.deleted_order_ids || []);
   const nonVoidStatuses = new Set(['cancelled', 'fake', 'returned']);
-  const validOrders = (orderRows || []).filter((o) => !nonVoidStatuses.has(o.order_status));
+
+  const activeOrderRows = (orderRows || []).filter(
+    (o) => !deletedIds.has(o.id) && o.admin_note !== '__DELETED__'
+  );
+  const validOrders = activeOrderRows.filter((o) => !nonVoidStatuses.has(o.order_status));
   const sales = validOrders.reduce((a, o) => a + Number(o.total || 0), 0);
+
+  const visibleRecent = (recent || [])
+    .filter((o) => !deletedIds.has(o.id) && o.admin_note !== '__DELETED__')
+    .slice(0, 8);
 
   return (
     <>
@@ -30,7 +42,7 @@ export default async function Dashboard() {
         </div>
         <div style={{ display: 'flex', gap: '10px' }}>
           <Link className="primary inline" href="/admin/finance" style={{ background: '#6E705B' }}>
-            الحسابات والمخزون
+            الحسابات ورأس المال
           </Link>
           <Link className="primary inline" href="/admin/products/new">
             + Add product
@@ -54,7 +66,7 @@ export default async function Dashboard() {
       <section className="admin-card">
         <h2>Recent orders</h2>
         <div className="admin-table">
-          {(recent || []).map((o) => (
+          {visibleRecent.map((o) => (
             <Link className="table-row" key={o.id} href={`/admin/orders/${o.id}`}>
               <span>#{o.order_number}</span>
               <span>
@@ -64,7 +76,7 @@ export default async function Dashboard() {
               <span className={`status ${o.order_status}`}>{o.order_status}</span>
             </Link>
           ))}
-          {(!recent || recent.length === 0) && (
+          {visibleRecent.length === 0 && (
             <p style={{ padding: '16px', color: 'var(--color-muted, #888)' }}>No recent orders.</p>
           )}
         </div>

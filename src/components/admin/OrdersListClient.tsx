@@ -5,7 +5,7 @@ import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/browser';
 
-const VOID_STATUSES = new Set(['cancelled', 'fake', 'returned']);
+const VOID_STATUSES = new Set(['cancelled', 'returned']);
 
 export function OrdersListClient({ initialOrders }: { initialOrders: any[] }) {
   const supabase = useMemo(() => createClient(), []);
@@ -14,7 +14,7 @@ export function OrdersListClient({ initialOrders }: { initialOrders: any[] }) {
   const [busyId, setBusyId] = useState<string | null>(null);
 
   async function restoreStockIfNeeded(orderId: string, currentStatus: string) {
-    if (VOID_STATUSES.has(currentStatus)) return; // Already restored
+    if (VOID_STATUSES.has(currentStatus)) return;
     const { data: items } = await supabase
       .from('order_items')
       .select('variant_id, quantity')
@@ -41,7 +41,7 @@ export function OrdersListClient({ initialOrders }: { initialOrders: any[] }) {
   }
 
   async function deductStockIfNeeded(orderId: string, currentStatus: string) {
-    if (!VOID_STATUSES.has(currentStatus)) return; // Already deducted
+    if (!VOID_STATUSES.has(currentStatus)) return;
     const { data: items } = await supabase
       .from('order_items')
       .select('variant_id, quantity')
@@ -70,12 +70,24 @@ export function OrdersListClient({ initialOrders }: { initialOrders: any[] }) {
     }
   }
 
-  async function handleStatusChange(order: any, nextStatus: string) {
-    if (order.order_status === nextStatus) return;
+  function getDisplaySelectValue(o: any): string {
+    if (o.order_status === 'confirmed' && o.payment_status === 'paid') return 'paid';
+    return o.order_status;
+  }
+
+  async function handleStatusChange(order: any, selectedValue: string) {
     setBusyId(order.id);
 
+    const dbOrderStatus = selectedValue === 'paid' ? 'confirmed' : selectedValue;
+    const dbPaymentStatus =
+      selectedValue === 'paid' || selectedValue === 'shipped' || selectedValue === 'delivered'
+        ? 'paid'
+        : selectedValue === 'returned'
+        ? 'refunded'
+        : 'pending';
+
     const wasVoid = VOID_STATUSES.has(order.order_status);
-    const willBeVoid = VOID_STATUSES.has(nextStatus);
+    const willBeVoid = VOID_STATUSES.has(dbOrderStatus);
 
     if (!wasVoid && willBeVoid) {
       await restoreStockIfNeeded(order.id, order.order_status);
@@ -83,16 +95,9 @@ export function OrdersListClient({ initialOrders }: { initialOrders: any[] }) {
       await deductStockIfNeeded(order.id, order.order_status);
     }
 
-    const nextPayment =
-      nextStatus === 'confirmed' || nextStatus === 'shipped' || nextStatus === 'delivered'
-        ? 'paid'
-        : nextStatus === 'returned'
-        ? 'refunded'
-        : order.payment_status;
-
     const { error } = await supabase
       .from('orders')
-      .update({ order_status: nextStatus, payment_status: nextPayment })
+      .update({ order_status: dbOrderStatus, payment_status: dbPaymentStatus })
       .eq('id', order.id);
 
     setBusyId(null);
@@ -104,7 +109,7 @@ export function OrdersListClient({ initialOrders }: { initialOrders: any[] }) {
     setOrders((prev) =>
       prev.map((o) =>
         o.id === order.id
-          ? { ...o, order_status: nextStatus, payment_status: nextPayment }
+          ? { ...o, order_status: dbOrderStatus, payment_status: dbPaymentStatus }
           : o
       )
     );
@@ -112,22 +117,20 @@ export function OrdersListClient({ initialOrders }: { initialOrders: any[] }) {
   }
 
   async function handleDelete(order: any) {
-    if (
-      !confirm(
-        `هل تريد مسح الطلب #${order.order_number} نهائياً؟ (سيتم استرجاع القطع للمخزون تلقائياً وإلغاء حسابه من المبيعات)`
-      )
-    )
-      return;
+    if (!confirm(`هل تريد مسح الطلب #${order.order_number} نهائياً؟`)) return;
 
     setBusyId(order.id);
     await restoreStockIfNeeded(order.id, order.order_status);
 
-    await supabase.from('order_items').delete().eq('order_id', order.id);
-    const { error } = await supabase.from('orders').delete().eq('id', order.id);
+    const res = await fetch('/api/admin/finance', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'delete_order', orderId: order.id }),
+    });
 
     setBusyId(null);
-    if (error) {
-      alert(error.message);
+    if (!res.ok) {
+      alert('حدث خطأ أثناء مسح الطلب');
       return;
     }
 
@@ -148,11 +151,13 @@ export function OrdersListClient({ initialOrders }: { initialOrders: any[] }) {
         <span>Customer</span>
         <span>Total</span>
         <span>Payment</span>
-        <span>Status (الحالة)</span>
+        <span>Status</span>
         <span>مسح</span>
       </div>
       {orders.map((o) => {
         const isVoid = VOID_STATUSES.has(o.order_status);
+        const selectVal = getDisplaySelectValue(o);
+
         return (
           <div
             className="admin-table orders-head table-row"
@@ -183,7 +188,7 @@ export function OrdersListClient({ initialOrders }: { initialOrders: any[] }) {
             </Link>
             <div onClick={(e) => e.stopPropagation()}>
               <select
-                value={o.order_status}
+                value={selectVal}
                 disabled={busyId === o.id}
                 onChange={(e) => handleStatusChange(o, e.target.value)}
                 style={{
@@ -193,25 +198,25 @@ export function OrdersListClient({ initialOrders }: { initialOrders: any[] }) {
                   fontWeight: 600,
                   border: '1px solid #d5d5d2',
                   background:
-                    o.order_status === 'new'
+                    selectVal === 'new'
                       ? '#fff0b8'
-                      : o.order_status === 'confirmed'
+                      : selectVal === 'confirmed' || selectVal === 'paid'
                       ? '#dbe8ff'
-                      : o.order_status === 'shipped'
+                      : selectVal === 'shipped'
                       ? '#dcd7ff'
-                      : o.order_status === 'delivered'
+                      : selectVal === 'delivered'
                       ? '#d8f0dc'
                       : '#f4d8d8',
                   cursor: 'pointer',
                 }}
               >
-                <option value="new">New (جديد)</option>
-                <option value="confirmed">Confirmed (مؤكد / مدفوع)</option>
-                <option value="shipped">Shipped (تم الشحن)</option>
-                <option value="delivered">Delivered (تم التسليم)</option>
-                <option value="cancelled">Cancelled (ملغي - يرجع للمخزون)</option>
-                <option value="fake">Fake / Test (وهمي / تجربة - يرجع للمخزون)</option>
-                <option value="returned">Returned (مرتجع - يرجع للمخزون)</option>
+                <option value="new">جديد</option>
+                <option value="confirmed">مؤكد</option>
+                <option value="paid">مدفوع</option>
+                <option value="shipped">تم الشحن</option>
+                <option value="delivered">تم التسليم</option>
+                <option value="cancelled">ملغي</option>
+                <option value="returned">مرتجع</option>
               </select>
             </div>
             <div>

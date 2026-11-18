@@ -1,17 +1,22 @@
 import { createClient } from '@/lib/supabase/server';
 import { OrdersListClient } from '@/components/admin/OrdersListClient';
+import { loadLedgerFromStorageOrLocal } from '@/app/api/admin/finance/route';
 
 export default async function Orders() {
   const s = await createClient();
-  const { data, error } = await s
-    .from('orders')
-    .select('*')
-    .order('created_at', { ascending: false })
-    .limit(100);
+  const [{ data, error }, ledger] = await Promise.all([
+    s.from('orders').select('*').order('created_at', { ascending: false }).limit(100),
+    loadLedgerFromStorageOrLocal(s),
+  ]);
 
   if (error) {
     console.error('[Admin Orders] Database error fetching orders:', error);
   }
+
+  const deletedIds = new Set(ledger.deleted_order_ids || []);
+  const visibleOrders = (data || []).filter(
+    (o) => !deletedIds.has(o.id) && o.admin_note !== '__DELETED__'
+  );
 
   return (
     <>
@@ -32,7 +37,7 @@ export default async function Orders() {
           <p>Error loading orders: {error.message}</p>
         </div>
       )}
-      <OrdersListClient initialOrders={data || []} />
+      <OrdersListClient initialOrders={visibleOrders} />
     </>
   );
 }

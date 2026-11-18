@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import { createClient } from '@/lib/supabase/browser';
 import { imageUrl } from '@/lib/images';
 
-const VOID_STATUSES = new Set(['cancelled', 'fake', 'returned']);
+const VOID_STATUSES = new Set(['cancelled', 'returned']);
 
 export function OrderActions({
   order,
@@ -16,11 +16,17 @@ export function OrderActions({
 }) {
   const supabase = useMemo(() => createClient(), []);
   const router = useRouter();
-  const [status, setStatus] = useState<string>(order.order_status);
+  const [status, setStatus] = useState<string>(() => {
+    if (order.order_status === 'confirmed' && order.payment_status === 'paid') {
+      return 'paid';
+    }
+    return order.order_status;
+  });
   const [busy, setBusy] = useState(false);
 
   async function restoreStockIfNeeded(currentStatus: string) {
-    if (VOID_STATUSES.has(currentStatus)) return;
+    const rawCurrent = currentStatus === 'paid' ? 'confirmed' : currentStatus;
+    if (VOID_STATUSES.has(rawCurrent)) return;
     const items = order.order_items || [];
     for (const item of items) {
       if (!item.variant_id) continue;
@@ -41,7 +47,8 @@ export function OrderActions({
   }
 
   async function deductStockIfNeeded(currentStatus: string) {
-    if (!VOID_STATUSES.has(currentStatus)) return;
+    const rawCurrent = currentStatus === 'paid' ? 'confirmed' : currentStatus;
+    if (!VOID_STATUSES.has(rawCurrent)) return;
     const items = order.order_items || [];
     for (const item of items) {
       if (!item.variant_id) continue;
@@ -64,12 +71,21 @@ export function OrderActions({
     }
   }
 
-  async function quickStatus(nextStatus: string) {
-    if (status === nextStatus) return;
+  async function quickStatus(selectedValue: string) {
+    if (status === selectedValue) return;
     setBusy(true);
 
-    const wasVoid = VOID_STATUSES.has(status);
-    const willBeVoid = VOID_STATUSES.has(nextStatus);
+    const dbOrderStatus = selectedValue === 'paid' ? 'confirmed' : selectedValue;
+    const dbPaymentStatus =
+      selectedValue === 'paid' || selectedValue === 'shipped' || selectedValue === 'delivered'
+        ? 'paid'
+        : selectedValue === 'returned'
+        ? 'refunded'
+        : 'pending';
+
+    const rawCurrent = status === 'paid' ? 'confirmed' : status;
+    const wasVoid = VOID_STATUSES.has(rawCurrent);
+    const willBeVoid = VOID_STATUSES.has(dbOrderStatus);
 
     if (!wasVoid && willBeVoid) {
       await restoreStockIfNeeded(status);
@@ -77,16 +93,9 @@ export function OrderActions({
       await deductStockIfNeeded(status);
     }
 
-    const nextPayment =
-      nextStatus === 'confirmed' || nextStatus === 'shipped' || nextStatus === 'delivered'
-        ? 'paid'
-        : nextStatus === 'returned'
-        ? 'refunded'
-        : order.payment_status;
-
     const { error } = await supabase
       .from('orders')
-      .update({ order_status: nextStatus, payment_status: nextPayment })
+      .update({ order_status: dbOrderStatus, payment_status: dbPaymentStatus })
       .eq('id', order.id);
 
     setBusy(false);
@@ -94,25 +103,25 @@ export function OrderActions({
       alert(error.message);
       return;
     }
-    setStatus(nextStatus);
+    setStatus(selectedValue);
     router.refresh();
   }
 
   async function deleteOrder() {
-    if (
-      !confirm(
-        `هل أنت متأكد من مسح الطلب #${order.order_number} نهائياً؟ سيتم استرجاع القطع للمخزون وإلغاء حسابه من الأرباح.`
-      )
-    )
-      return;
+    if (!confirm(`هل أنت متأكد من مسح الطلب #${order.order_number} نهائياً؟`)) return;
 
     setBusy(true);
     await restoreStockIfNeeded(status);
-    await supabase.from('order_items').delete().eq('order_id', order.id);
-    const { error } = await supabase.from('orders').delete().eq('id', order.id);
+
+    const res = await fetch('/api/admin/finance', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'delete_order', orderId: order.id }),
+    });
+
     setBusy(false);
-    if (error) {
-      alert(error.message);
+    if (!res.ok) {
+      alert('حدث خطأ أثناء مسح الطلب');
       return;
     }
     router.push('/admin/orders');
@@ -155,16 +164,13 @@ export function OrderActions({
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8" />
-  <title>DUTHUR - Order #${order.order_number} Fulfillment Slip</title>
+  <title>DUTHUR - Order #${order.order_number}</title>
   <style>
     body { font-family: system-ui, -apple-system, sans-serif; background: #f5f5f3; color: #171717; padding: 30px; margin: 0; }
     .sheet { max-width: 820px; margin: 0 auto; background: #fff; border: 2px solid #171717; border-radius: 12px; padding: 32px; }
     .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 2px solid #171717; padding-bottom: 18px; margin-bottom: 24px; }
     .brand { font-size: 28px; font-weight: 900; letter-spacing: 0.12em; }
     .tag-box { border: 2px dashed #171717; padding: 16px; border-radius: 10px; background: #faf9f5; margin-bottom: 24px; }
-    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 24px; }
-    .box { border: 1px solid #ddd; border-radius: 8px; padding: 16px; }
-    .box h3 { margin: 0 0 10px; font-size: 14px; color: #666; text-transform: uppercase; }
     table { width: 100%; border-collapse: collapse; margin-bottom: 24px; }
     th { background: #171717; color: #fff; padding: 10px 12px; text-align: right; font-size: 13px; }
     .actions { text-align: center; margin-bottom: 20px; }
@@ -174,13 +180,13 @@ export function OrderActions({
 </head>
 <body>
   <div class="actions">
-    <button class="btn" onclick="window.print()">طباعة / حفظ كـ PDF (Print / Save PDF)</button>
+    <button class="btn" onclick="window.print()">طباعة / حفظ كـ PDF</button>
   </div>
   <div class="sheet">
     <div class="header">
       <div>
         <div class="brand">DUTHUR — دُثُر</div>
-        <div style="color:#555;font-size:13px;margin-top:4px;">بوليصة تجهيز وشحن الطلب (Fulfillment & Shipping Tag)</div>
+        <div style="color:#555;font-size:13px;margin-top:4px;">بوليصة تجهيز وشحن الطلب</div>
       </div>
       <div style="text-align:left;">
         <div style="font-size:24px;font-weight:800;">#${order.order_number}</div>
@@ -189,7 +195,7 @@ export function OrderActions({
     </div>
 
     <div class="tag-box">
-      <div style="font-size:12px;color:#666;font-weight:700;margin-bottom:6px;">ملصق الشحن السريع (SHIPPING LABEL / TAG)</div>
+      <div style="font-size:12px;color:#666;font-weight:700;margin-bottom:6px;">ملصق الشحن (SHIPPING TAG)</div>
       <div style="font-size:20px;font-weight:800;margin-bottom:6px;">${order.customer_first_name} ${order.customer_last_name} — <span dir="ltr">${order.phone || ''}</span></div>
       <div style="font-size:16px;line-height:1.5;">
         <strong>${order.country || 'Türkiye'} — ${order.province} / ${order.district}</strong><br/>
@@ -203,9 +209,9 @@ export function OrderActions({
     <table>
       <thead>
         <tr>
-          <th>التيشيرت المطلوب (Item)</th>
-          <th style="text-align:center;">المقاس (Size)</th>
-          <th style="text-align:center;">الكمية (Qty)</th>
+          <th>التيشيرت</th>
+          <th style="text-align:center;">المقاس</th>
+          <th style="text-align:center;">الكمية</th>
           <th style="text-align:end;">السعر</th>
         </tr>
       </thead>
@@ -246,7 +252,7 @@ export function OrderActions({
           fontWeight: 700,
         }}
       >
-        ⬇ تحميل بوليصة التيشيرت والشحن والتاج
+        ⬇ تحميل التيشيرت والشحن والتاج
       </button>
 
       <select
@@ -263,13 +269,13 @@ export function OrderActions({
           cursor: 'pointer',
         }}
       >
-        <option value="new">الحالة: جديد (New)</option>
-        <option value="confirmed">تأكيد الطلب (Confirmed / Paid)</option>
-        <option value="shipped">تم الشحن (Shipped)</option>
-        <option value="delivered">تم التسليم (Delivered)</option>
-        <option value="cancelled">إلغاء الطلب (Cancelled — يرجع للمخزون)</option>
-        <option value="fake">طلب وهمي / تجربة (Fake — يرجع للمخزون)</option>
-        <option value="returned">مرتجع (Returned — يرجع للمخزون)</option>
+        <option value="new">جديد</option>
+        <option value="confirmed">مؤكد</option>
+        <option value="paid">مدفوع</option>
+        <option value="shipped">تم الشحن</option>
+        <option value="delivered">تم التسليم</option>
+        <option value="cancelled">ملغي</option>
+        <option value="returned">مرتجع</option>
       </select>
 
       <button
@@ -279,7 +285,7 @@ export function OrderActions({
         onClick={deleteOrder}
         style={{ padding: '10px 16px', fontSize: '13px', fontWeight: 700 }}
       >
-        {busy ? 'جاري التنفيذ...' : 'مسح الطلب نهائياً ✕'}
+        {busy ? '...' : 'مسح ✕'}
       </button>
     </div>
   );
