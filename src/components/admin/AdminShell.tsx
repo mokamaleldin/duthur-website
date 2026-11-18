@@ -8,6 +8,7 @@ const links = [
   ['/admin', 'Dashboard'],
   ['/admin/products', 'Products'],
   ['/admin/orders', 'Orders'],
+  ['/admin/finance', 'الحسابات والمخزون'],
   ['/admin/discounts', 'Discounts'],
   ['/admin/messages', 'Messages'],
   ['/admin/settings', 'Settings'],
@@ -33,15 +34,22 @@ export function AdminShell({
     <div className="admin-shell">
       <aside className="admin-sidebar">
         <div className="admin-logo">DUTHUR</div>
-        {links.map(([href, label]) => (
-          <Link
-            key={href}
-            className={path === href || path.startsWith(href + '/') ? 'active' : ''}
-            href={href}
-          >
-            {label}
-          </Link>
-        ))}
+        {links.map(([href, label]) => {
+          const isActive =
+            href === '/admin'
+              ? path === '/admin'
+              : path === href || path.startsWith(href + '/');
+          return (
+            <Link
+              key={href}
+              className={isActive ? 'active' : ''}
+              href={href}
+              prefetch={true}
+            >
+              {label}
+            </Link>
+          );
+        })}
         <div className="admin-bottom">
           <small>{email}</small>
           <button onClick={logout}>Sign out</button>

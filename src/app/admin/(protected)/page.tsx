@@ -5,24 +5,21 @@ export default async function Dashboard() {
   const s = await createClient();
   const [
     { count: products, error: productsError },
-    { count: orders, error: ordersError },
     { data: orderRows, error: orderRowsError },
     { data: recent, error: recentError },
   ] = await Promise.all([
     s.from('products').select('*', { count: 'exact', head: true }),
-    s.from('orders').select('*', { count: 'exact', head: true }),
     s.from('orders').select('total,order_status'),
     s.from('orders').select('*').order('created_at', { ascending: false }).limit(8),
   ]);
 
   if (productsError) console.error('[Dashboard] Error fetching products count:', productsError);
-  if (ordersError) console.error('[Dashboard] Error fetching orders count:', ordersError);
   if (orderRowsError) console.error('[Dashboard] Error fetching order rows:', orderRowsError);
   if (recentError) console.error('[Dashboard] Error fetching recent orders:', recentError);
 
-  const sales = (orderRows || [])
-    .filter((o) => o.order_status !== 'cancelled')
-    .reduce((a, o) => a + Number(o.total || 0), 0);
+  const nonVoidStatuses = new Set(['cancelled', 'fake', 'returned']);
+  const validOrders = (orderRows || []).filter((o) => !nonVoidStatuses.has(o.order_status));
+  const sales = validOrders.reduce((a, o) => a + Number(o.total || 0), 0);
 
   return (
     <>
@@ -31,26 +28,27 @@ export default async function Dashboard() {
           <p>Overview</p>
           <h1>Dashboard</h1>
         </div>
-        <Link className="primary inline" href="/admin/products/new">
-          + Add product
-        </Link>
+        <div style={{ display: 'flex', gap: '10px' }}>
+          <Link className="primary inline" href="/admin/finance" style={{ background: '#6E705B' }}>
+            الحسابات والمخزون
+          </Link>
+          <Link className="primary inline" href="/admin/products/new">
+            + Add product
+          </Link>
+        </div>
       </div>
-      <div className="stat-grid">
+      <div className="stat-grid" style={{ gridTemplateColumns: 'repeat(3, 1fr)' }}>
         <div>
           <span>Products</span>
           <strong>{products || 0}</strong>
         </div>
         <div>
           <span>Orders</span>
-          <strong>{orders || 0}</strong>
+          <strong>{validOrders.length}</strong>
         </div>
         <div>
           <span>Sales</span>
           <strong>{sales.toFixed(2)} TL</strong>
-        </div>
-        <div>
-          <span>New orders</span>
-          <strong>{(orderRows || []).filter((o) => o.order_status === 'new').length}</strong>
         </div>
       </div>
       <section className="admin-card">
