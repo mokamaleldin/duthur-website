@@ -5,7 +5,7 @@ import path from 'path';
 import fs from 'fs';
 
 const FINANCE_JSON_PATH = path.join(process.cwd(), 'supabase', 'duthur_finance_ledger.json');
-const DB_MARKER_PREFIX = '__DUTHUR_LEDGER_V4__:';
+const DB_MARKER_PREFIX = '__DUTHUR_LEDGER_V5__:';
 
 export type ExtendedDuthurLedger = DuthurFinanceLedger & {
   deleted_order_ids?: string[];
@@ -17,7 +17,12 @@ export type ExtendedDuthurLedger = DuthurFinanceLedger & {
 export async function loadLedgerFromStorageOrLocal(
   supabase: any
 ): Promise<ExtendedDuthurLedger> {
-  // 1. Primary source of truth: store_settings.announcement_tr in Supabase DB (works on Vercel & Local!)
+  let prevDeletedOrders: string[] = [];
+  let prevDeletedMessages: string[] = [];
+  let prevDeletedDiscounts: string[] = [];
+  let prevDiscountMap: Record<string, string[]> = {};
+
+  // 1. Primary source of truth: store_settings.announcement_tr in Supabase DB
   try {
     const { data: st } = await supabase
       .from('store_settings')
@@ -26,18 +31,36 @@ export async function loadLedgerFromStorageOrLocal(
       .maybeSingle();
 
     const raw = st?.announcement_tr || '';
-    if (typeof raw === 'string' && raw.includes(DB_MARKER_PREFIX)) {
-      const jsonPart = raw.split(DB_MARKER_PREFIX)[1];
-      if (jsonPart) {
-        const parsed = JSON.parse(jsonPart);
-        if (parsed && parsed.version) {
-          return {
-            ...parsed,
-            deleted_order_ids: parsed.deleted_order_ids || [],
-            deleted_message_ids: parsed.deleted_message_ids || [],
-            deleted_discount_ids: parsed.deleted_discount_ids || [],
-            discount_product_map: parsed.discount_product_map || {},
-          };
+    if (typeof raw === 'string') {
+      // Check V5 first
+      if (raw.includes(DB_MARKER_PREFIX)) {
+        const jsonPart = raw.split(DB_MARKER_PREFIX)[1];
+        if (jsonPart) {
+          const parsed = JSON.parse(jsonPart);
+          if (parsed && parsed.version) {
+            return {
+              ...parsed,
+              deleted_order_ids: parsed.deleted_order_ids || [],
+              deleted_message_ids: parsed.deleted_message_ids || [],
+              deleted_discount_ids: parsed.deleted_discount_ids || [],
+              discount_product_map: parsed.discount_product_map || {},
+            };
+          }
+        }
+      }
+
+      // Preserve deleted IDs from V4 or V3 if upgrading!
+      for (const oldMarker of ['__DUTHUR_LEDGER_V4__:', '__DUTHUR_LEDGER_V3__:']) {
+        if (raw.includes(oldMarker)) {
+          const jsonPart = raw.split(oldMarker)[1]?.split('__DUTHUR_LEDGER_')[0];
+          if (jsonPart) {
+            const parsed = JSON.parse(jsonPart);
+            prevDeletedOrders = parsed.deleted_order_ids || [];
+            prevDeletedMessages = parsed.deleted_message_ids || [];
+            prevDeletedDiscounts = parsed.deleted_discount_ids || [];
+            prevDiscountMap = parsed.discount_product_map || {};
+            break;
+          }
         }
       }
     }
@@ -50,14 +73,27 @@ export async function loadLedgerFromStorageOrLocal(
     if (fs.existsSync(FINANCE_JSON_PATH)) {
       const text = await fs.promises.readFile(FINANCE_JSON_PATH, 'utf8');
       const parsed = JSON.parse(text);
-      if (parsed && parsed.version >= 4) {
-        return {
-          ...parsed,
-          deleted_order_ids: parsed.deleted_order_ids || [],
-          deleted_message_ids: parsed.deleted_message_ids || [],
-          deleted_discount_ids: parsed.deleted_discount_ids || [],
-          discount_product_map: parsed.discount_product_map || {},
-        };
+      if (parsed) {
+        prevDeletedOrders = Array.from(
+          new Set([...prevDeletedOrders, ...(parsed.deleted_order_ids || [])])
+        );
+        prevDeletedMessages = Array.from(
+          new Set([...prevDeletedMessages, ...(parsed.deleted_message_ids || [])])
+        );
+        prevDeletedDiscounts = Array.from(
+          new Set([...prevDeletedDiscounts, ...(parsed.deleted_discount_ids || [])])
+        );
+        prevDiscountMap = { ...prevDiscountMap, ...(parsed.discount_product_map || {}) };
+
+        if (parsed.version >= 5) {
+          return {
+            ...parsed,
+            deleted_order_ids: prevDeletedOrders,
+            deleted_message_ids: prevDeletedMessages,
+            deleted_discount_ids: prevDeletedDiscounts,
+            discount_product_map: prevDiscountMap,
+          };
+        }
       }
     }
   } catch {
@@ -66,10 +102,10 @@ export async function loadLedgerFromStorageOrLocal(
 
   return {
     ...structuredClone(DEFAULT_FINANCE_LEDGER),
-    deleted_order_ids: [],
-    deleted_message_ids: [],
-    deleted_discount_ids: [],
-    discount_product_map: {},
+    deleted_order_ids: prevDeletedOrders,
+    deleted_message_ids: prevDeletedMessages,
+    deleted_discount_ids: prevDeletedDiscounts,
+    discount_product_map: prevDiscountMap,
   };
 }
 
@@ -79,7 +115,7 @@ export async function saveLedgerToStorageAndLocal(
 ) {
   const jsonStr = JSON.stringify(ledger);
 
-  // 1. Save into store_settings.announcement_tr in Supabase DB (always succeeds for admins on Vercel!)
+  // 1. Save into store_settings.announcement_tr in Supabase DB
   try {
     const { data: st } = await supabase
       .from('store_settings')
@@ -90,6 +126,7 @@ export async function saveLedgerToStorageAndLocal(
     const currentRaw = st?.announcement_tr || '2 ürün al, ücretsiz kargo kazan';
     const cleanPrefix = currentRaw
       .split('__DUTHUR_LEDGER_V3__:')[0]
+      .split('__DUTHUR_LEDGER_V4__:')[0]
       .split(DB_MARKER_PREFIX)[0];
     const encoded = `${cleanPrefix}${DB_MARKER_PREFIX}${jsonStr}`;
 
